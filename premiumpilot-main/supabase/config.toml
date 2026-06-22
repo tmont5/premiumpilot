@@ -1,0 +1,53 @@
+# Supabase local/project config for PremiumPilot.
+project_id = "premiumpilot"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+
+[db]
+port = 54322
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+# Set to your deployed URL in production.
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/auth/callback"]
+jwt_expiry = 3600
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+# OAuth providers (PRD §3). Secrets are read from env, never committed.
+[auth.external.google]
+enabled = true
+client_id = "env(GOOGLE_CLIENT_ID)"
+secret = "env(GOOGLE_SECRET)"
+
+[auth.external.apple]
+enabled = true
+client_id = "env(APPLE_CLIENT_ID)"
+secret = "env(APPLE_SECRET)"
+
+# Edge Functions. Cron-invoked functions skip JWT verification (called with the
+# service-role bearer from pg_net); the OAuth callback is public.
+[functions.schwab-oauth]
+verify_jwt = false
+
+[functions.schwab-sync]
+verify_jwt = false
+
+[functions.evaluate]
+verify_jwt = false
+
+[functions.daily-summary]
+verify_jwt = false
