@@ -18,9 +18,11 @@ const TYPE_LABEL: Record<ConnectedAccount["account_type"], string> = {
 export function AccountsView({
   accounts,
   balances,
+  connectUrl,
 }: {
   accounts: ConnectedAccount[];
   balances: AccountBalance[];
+  connectUrl: string | null;
 }) {
   const [combined, setCombined] = useState(true);
   const balanceFor = (id: string) => balances.find((b) => b.connected_account_id === id);
@@ -99,7 +101,18 @@ export function AccountsView({
             <Plus className="size-6 text-muted-foreground" />
             <p className="text-sm font-medium">Connect a Schwab account</p>
             <p className="text-xs text-muted-foreground">Individual, IRA, or Joint via OAuth 2.0.</p>
-            <Button size="sm">Connect with Schwab</Button>
+            <Button
+              size="sm"
+              disabled={!connectUrl}
+              onClick={() => {
+                if (connectUrl) window.location.href = connectUrl;
+              }}
+            >
+              Connect with Schwab
+            </Button>
+            {!connectUrl && (
+              <p className="text-xs text-muted-foreground">Sign in before connecting a brokerage account.</p>
+            )}
           </CardContent>
         </Card>
       </div>
