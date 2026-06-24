@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Daily 7AM summary (PRD §11). Sends each user a digest via their enabled
 // channels: email (Resend), Discord (webhook), web push.
 //

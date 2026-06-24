@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Compass } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,29 +11,67 @@ import { Disclaimer } from "@/components/disclaimer";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginShell />}>
+      <LoginContent />
+    </Suspense>
+  );
+}
+
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const next = safeNext(searchParams.get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
   const supabase = createClient();
   const demo = supabase === null;
 
   async function oauth(provider: "google" | "apple") {
-    if (!supabase) return router.push("/dashboard");
+    if (!supabase) return router.push(next);
+    setError(null);
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` },
     });
     if (error) setError(error.message);
   }
 
-  async function emailSignIn(e: React.FormEvent) {
+  async function emailAuth(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!supabase) return router.push("/dashboard");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setError(error.message);
-    else router.push("/dashboard");
+    setMessage(null);
+    if (!supabase) return router.push(next);
+
+    setPending(true);
+    const result =
+      mode === "signin"
+        ? await supabase.auth.signInWithPassword({ email, password })
+        : await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+            },
+          });
+    setPending(false);
+
+    if (result.error) {
+      setError(result.error.message);
+      return;
+    }
+
+    if (mode === "signup" && !result.data.session) {
+      setMessage("Check your email to confirm your account, then sign in.");
+      return;
+    }
+
+    router.push(next);
+    router.refresh();
   }
 
   return (
@@ -62,7 +100,7 @@ export default function LoginPage() {
               <Separator className="flex-1" />
             </div>
 
-            <form className="space-y-3" onSubmit={emailSignIn}>
+            <form className="space-y-3" onSubmit={emailAuth}>
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>
                 <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
@@ -72,14 +110,27 @@ export default function LoginPage() {
                 <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
               </div>
               {error && <p className="text-sm text-danger">{error}</p>}
-              <Button type="submit" className="w-full">
-                Sign in with email
+              {message && <p className="text-sm text-success">{message}</p>}
+              <Button type="submit" className="w-full" disabled={pending}>
+                {pending ? "Working..." : mode === "signin" ? "Sign in with email" : "Create account"}
               </Button>
             </form>
 
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={() => {
+                setError(null);
+                setMessage(null);
+                setMode(mode === "signin" ? "signup" : "signin");
+              }}
+            >
+              {mode === "signin" ? "Create an email account" : "Already have an account? Sign in"}
+            </Button>
+
             {demo && (
-              <Button variant="ghost" className="w-full" onClick={() => router.push("/dashboard")}>
-                Explore in demo mode →
+              <Button variant="ghost" className="w-full" onClick={() => router.push(next)}>
+                Explore in demo mode
               </Button>
             )}
           </CardContent>
@@ -91,4 +142,13 @@ export default function LoginPage() {
       </div>
     </div>
   );
+}
+
+function LoginShell() {
+  return <div className="min-h-screen bg-secondary/30" />;
+}
+
+function safeNext(next: string | null): string {
+  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/dashboard";
+  return next;
 }

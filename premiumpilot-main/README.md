@@ -56,6 +56,8 @@ pnpm build      # production build
 5. Store `project_url` + `service_role_key` in Supabase Vault, then run
    `0004_cron.sql` to activate the scheduled jobs.
 
+Detailed provisioning steps live in `docs/supabase-setup.md`.
+
 ## Engine formulas (PRD §6–§8)
 
 Profit Capture %, Annualized Return, Distance From Strike, ROC, DTE,

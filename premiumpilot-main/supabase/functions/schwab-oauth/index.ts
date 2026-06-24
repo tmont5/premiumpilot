@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Schwab OAuth (PRD §5). Two modes:
 //   GET ?action=authorize&user_id=...   -> redirects the user to Schwab consent
 //   GET ?code=...&state=<user_id>       -> Schwab callback; exchanges + stores tokens

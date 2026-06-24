@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Scheduled sync (PRD §5): runs every 15 minutes. For each connected account:
 //   1. refresh the access token if it is near expiry (flag re-auth on failure)
 //   2. pull balances + option positions

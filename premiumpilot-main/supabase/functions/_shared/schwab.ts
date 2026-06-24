@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // Charles Schwab API client (PRD §5). OAuth 2.0 authorization-code flow with
 // automatic refresh. All calls run server-side in Edge Functions.
 //

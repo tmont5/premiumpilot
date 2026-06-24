@@ -1,11 +1,23 @@
 import Link from "next/link";
-import { Compass } from "lucide-react";
+import { Compass, LogOut } from "lucide-react";
+import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { isDemoMode } from "@/lib/data";
+import { createClient } from "@/lib/supabase/server";
 
-export default function AppLayout({ children }: { children: React.ReactNode }) {
+export const dynamic = "force-dynamic";
+
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const demo = isDemoMode();
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = supabase ? await supabase.auth.getUser() : { data: { user: null } };
+
+  if (!demo && !user) redirect("/login");
+
   return (
     <div className="flex min-h-screen w-full">
       <aside className="hidden w-60 shrink-0 flex-col border-r bg-card/40 md:flex">
@@ -27,7 +39,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </Link>
           <div className="ml-auto flex items-center gap-3">
             {demo && <Badge variant="warning">Demo data</Badge>}
-            <span className="text-sm text-muted-foreground">montgomery.spencer72@gmail.com</span>
+            {user?.email && <span className="text-sm text-muted-foreground">{user.email}</span>}
+            {!demo && (
+              <form action="/auth/logout" method="post">
+                <Button type="submit" variant="outline" size="sm">
+                  <LogOut className="size-4" />
+                  Sign out
+                </Button>
+              </form>
+            )}
           </div>
         </header>
         <main className="flex-1 p-5 md:p-8">{children}</main>
