@@ -25,6 +25,7 @@ export interface PortfolioView {
   accounts: ConnectedAccount[];
   balances: AccountBalance[];
   positions: EnrichedPosition[];
+  premiumHistory: PremiumHistoryEntry[];
   score: ScoreBreakdown;
   alerts: GeneratedAlert[];
   totals: {
@@ -84,6 +85,7 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     accounts,
     balances,
     positions: enriched,
+    premiumHistory,
     score,
     alerts,
     totals: {

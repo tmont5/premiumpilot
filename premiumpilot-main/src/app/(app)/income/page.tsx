@@ -4,7 +4,6 @@ import { IncomeChart } from "@/components/income-chart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { getPortfolio } from "@/lib/data";
-import { seedPremiumHistory } from "@/lib/seed";
 import { fmtCurrency0, fmtPct } from "@/lib/format";
 
 export default async function IncomePage() {
@@ -43,7 +42,7 @@ export default async function IncomePage() {
           <CardTitle>Premium Collected — Trailing 12 Months</CardTitle>
         </CardHeader>
         <CardContent className="pt-2">
-          <IncomeChart history={seedPremiumHistory} />
+          <IncomeChart history={pf.premiumHistory} />
         </CardContent>
       </Card>
     </>
