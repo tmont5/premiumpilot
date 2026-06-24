@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -24,12 +25,47 @@ export function AccountsView({
   balances: AccountBalance[];
   connectUrl: string | null;
 }) {
+  const router = useRouter();
   const [combined, setCombined] = useState(true);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const balanceFor = (id: string) => balances.find((b) => b.connected_account_id === id);
   const totalNetLiq = balances.reduce((s, b) => s + b.net_liquidation_value, 0);
 
+  async function removeAccount(account: ConnectedAccount) {
+    const label = account.account_label || "this Schwab account";
+    if (!window.confirm(`Remove ${label}? This deletes synced balances and positions from PremiumPilot.`)) {
+      return;
+    }
+
+    setRemoveError(null);
+    setRemovingId(account.id);
+    try {
+      const response = await fetch(`/api/accounts/${encodeURIComponent(account.id)}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error ?? "Could not remove account");
+      }
+
+      router.refresh();
+    } catch (error) {
+      setRemoveError(error instanceof Error ? error.message : "Could not remove account");
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
+      {removeError && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {removeError}
+        </div>
+      )}
+
       <div className="flex items-center justify-between rounded-lg border bg-card p-4">
         <div>
           <p className="text-sm font-medium">Combined dashboard view</p>
@@ -87,8 +123,13 @@ export function AccountsView({
                   <p className="text-xs text-muted-foreground">
                     Last sync {fmtRelativeTime(a.last_synced_at)}
                   </p>
-                  <Button variant="outline" size="sm">
-                    Remove
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={removingId === a.id}
+                    onClick={() => removeAccount(a)}
+                  >
+                    {removingId === a.id ? "Removing..." : "Remove"}
                   </Button>
                 </div>
               </CardContent>
