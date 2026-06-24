@@ -80,8 +80,13 @@ async function authedGet(path: string, accessToken: string) {
 }
 
 // Accounts + positions with balances (PRD §5 data import).
-export function getAccounts(accessToken: string) {
-  return authedGet(`/accounts?fields=positions`, accessToken);
+export async function getAccounts(accessToken: string) {
+  try {
+    return await authedGet(`/accounts?fields=positions`, accessToken);
+  } catch (error) {
+    console.error("Schwab accounts-with-positions fetch failed; retrying accounts only", error);
+    return authedGet(`/accounts`, accessToken);
+  }
 }
 
 export function getOrders(accessToken: string, accountHash: string) {
@@ -113,9 +118,11 @@ export function mapPositions(account: any, underlyingPrices: Record<string, numb
     const inst = pos.instrument ?? {};
     if (inst.assetType !== "OPTION") continue;
     const isPut = inst.putCall === "PUT";
-    const ticker: string = inst.underlyingSymbol ?? inst.symbol;
+    const ticker: string = inst.underlyingSymbol ?? parseUnderlyingFromOptionSymbol(inst.symbol) ?? inst.symbol;
     const strike = Number(inst.strikePrice ?? 0);
     const contracts = Math.abs(Number(pos.shortQuantity ?? pos.longQuantity ?? 0));
+    const expiration = optionExpiration(inst);
+    if (!ticker || !strike || !contracts || !expiration) continue;
     const underlying = underlyingPrices[ticker] ?? 0;
     const premium = Math.abs(Number(pos.averagePrice ?? 0)) * contracts * 100;
     const marketVal = Math.abs(Number(pos.marketValue ?? 0));
@@ -123,7 +130,7 @@ export function mapPositions(account: any, underlyingPrices: Record<string, numb
       ticker,
       strategy: isPut ? "cash_secured_put" : "covered_call",
       strike,
-      expiration: (inst.optionExpirationDate ?? "").slice(0, 10),
+      expiration,
       contracts,
       premium_collected: premium,
       current_option_value: marketVal,
@@ -133,4 +140,24 @@ export function mapPositions(account: any, underlyingPrices: Record<string, numb
     });
   }
   return out;
+}
+
+function optionExpiration(inst: any): string | null {
+  const direct = inst.optionExpirationDate ?? inst.expirationDate ?? inst.maturityDate;
+  if (typeof direct === "string" && /^\d{4}-\d{2}-\d{2}/.test(direct)) return direct.slice(0, 10);
+
+  const symbol = String(inst.symbol ?? "");
+  const match = symbol.match(/\s(\d{6})[CP]\d{8}$/);
+  if (!match) return null;
+
+  const yy = Number(match[1].slice(0, 2));
+  const mm = match[1].slice(2, 4);
+  const dd = match[1].slice(4, 6);
+  return `${yy >= 70 ? "19" : "20"}${match[1].slice(0, 2)}-${mm}-${dd}`;
+}
+
+function parseUnderlyingFromOptionSymbol(symbol: unknown): string | null {
+  if (typeof symbol !== "string") return null;
+  const match = symbol.match(/^([A-Z.]+)\s+\d{6}[CP]\d{8}$/);
+  return match?.[1] ?? null;
 }

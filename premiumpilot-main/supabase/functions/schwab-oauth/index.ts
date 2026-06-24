@@ -66,23 +66,26 @@ Deno.serve(async (req) => {
       if (accountError) throw accountError;
 
       const bal = sa.currentBalances ?? {};
-      await db.from("account_balances").insert({
+      const { error: balanceError } = await db.from("account_balances").insert({
         connected_account_id: connected.id,
         net_liquidation_value: bal.liquidationValue ?? 0,
         cash_balance: bal.cashBalance ?? 0,
         buying_power: bal.buyingPower ?? bal.cashAvailableForTrading ?? 0,
       });
+      if (balanceError) console.error("schwab-oauth balance insert failed", balanceError);
 
       const mapped = mapPositions(a, {});
-      await db.from("positions").delete().eq("connected_account_id", connected.id);
+      const { error: deleteError } = await db.from("positions").delete().eq("connected_account_id", connected.id);
+      if (deleteError) console.error("schwab-oauth position delete failed", deleteError);
       if (mapped.length) {
-        await db.from("positions").insert(
+        const { error: positionError } = await db.from("positions").insert(
           mapped.map((m) => ({
             connected_account_id: connected.id,
             ...m,
             status: resolveStatus(m),
           }))
         );
+        if (positionError) console.error("schwab-oauth position insert failed", positionError);
       }
     }
 
