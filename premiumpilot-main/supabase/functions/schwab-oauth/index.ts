@@ -44,45 +44,39 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     for (const a of accounts as any[]) {
       const sa = a.securitiesAccount ?? {};
-      const { data: connected, error: accountError } = await db
-        .from("connected_accounts")
-        .upsert(
-          {
-            user_id: state.user_id,
-            broker: "schwab",
-            account_label: `Schwab ${sa.type ?? "Account"}`,
-            account_type: (sa.type ?? "individual").toLowerCase().includes("ira") ? "ira" : "individual",
-            schwab_account_id: sa.accountNumber ?? null,
-            encrypted_access_token: encAccess,
-            encrypted_refresh_token: encRefresh,
-            token_expires_at: expiresAt,
-            needs_reauth: false,
-          },
-          { onConflict: "user_id,schwab_account_id" }
-        )
-        .select("id")
-        .single();
-
-      if (accountError) throw accountError;
+      const connected = await saveConnectedAccount(db, {
+        user_id: state.user_id,
+        broker: "schwab",
+        account_label: `Schwab ${sa.type ?? "Account"}`,
+        account_type: (sa.type ?? "individual").toLowerCase().includes("ira") ? "ira" : "individual",
+        schwab_account_id: sa.accountNumber ?? null,
+        encrypted_access_token: encAccess,
+        encrypted_refresh_token: encRefresh,
+        token_expires_at: expiresAt,
+        needs_reauth: false,
+      });
 
       const bal = sa.currentBalances ?? {};
-      await db.from("account_balances").insert({
+      const { error: balanceError } = await db.from("account_balances").insert({
         connected_account_id: connected.id,
         net_liquidation_value: bal.liquidationValue ?? 0,
         cash_balance: bal.cashBalance ?? 0,
         buying_power: bal.buyingPower ?? bal.cashAvailableForTrading ?? 0,
       });
+      if (balanceError) console.error("schwab-oauth balance insert failed", balanceError);
 
       const mapped = mapPositions(a, {});
-      await db.from("positions").delete().eq("connected_account_id", connected.id);
+      const { error: deleteError } = await db.from("positions").delete().eq("connected_account_id", connected.id);
+      if (deleteError) console.error("schwab-oauth position delete failed", deleteError);
       if (mapped.length) {
-        await db.from("positions").insert(
+        const { error: positionError } = await db.from("positions").insert(
           mapped.map((m) => ({
             connected_account_id: connected.id,
             ...m,
             status: resolveStatus(m),
           }))
         );
+        if (positionError) console.error("schwab-oauth position insert failed", positionError);
       }
     }
 
@@ -94,6 +88,51 @@ Deno.serve(async (req) => {
     return new Response("oauth failed", { status: 500 });
   }
 });
+
+interface ConnectedAccountPayload {
+  user_id: string;
+  broker: "schwab";
+  account_label: string;
+  account_type: "individual" | "ira";
+  schwab_account_id: string | null;
+  encrypted_access_token: string;
+  encrypted_refresh_token: string;
+  token_expires_at: string;
+  needs_reauth: boolean;
+}
+
+async function saveConnectedAccount(db: ReturnType<typeof adminClient>, payload: ConnectedAccountPayload) {
+  let query = db
+    .from("connected_accounts")
+    .select("id")
+    .eq("user_id", payload.user_id)
+    .eq("broker", "schwab")
+    .limit(1);
+
+  if (payload.schwab_account_id) {
+    query = query.eq("schwab_account_id", payload.schwab_account_id);
+  } else {
+    query = query.is("schwab_account_id", null);
+  }
+
+  const { data: existing, error: findError } = await query.maybeSingle();
+  if (findError) throw findError;
+
+  if (existing?.id) {
+    const { data, error } = await db
+      .from("connected_accounts")
+      .update(payload)
+      .eq("id", existing.id)
+      .select("id")
+      .single();
+    if (error) throw error;
+    return data;
+  }
+
+  const { data, error } = await db.from("connected_accounts").insert(payload).select("id").single();
+  if (error) throw error;
+  return data;
+}
 
 interface SchwabOAuthState {
   user_id: string;
