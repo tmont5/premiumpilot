@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Schwab OAuth (PRD §5). Two modes:
 //   GET ?action=authorize&user_id=...   -> redirects the user to Schwab consent
-//   GET ?code=...&state=<user_id>       -> Schwab callback; exchanges + stores tokens
+//   GET ?code=...&state=<payload>       -> Schwab callback; exchanges + stores tokens
 //
 // Tokens are encrypted with AES-256-GCM before they touch the database.
 import { adminClient } from "../_shared/db.ts";
@@ -17,12 +17,16 @@ Deno.serve(async (req) => {
   if (action === "authorize") {
     const userId = url.searchParams.get("user_id");
     if (!userId) return new Response("missing user_id", { status: 400 });
-    return Response.redirect(authorizeUrl(userId), 302);
+    const state = encodeState({
+      user_id: userId,
+      return_to: safeReturnTo(url.searchParams.get("return_to")),
+    });
+    return Response.redirect(authorizeUrl(state), 302);
   }
 
   // Callback from Schwab.
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state"); // == user_id
+  const state = parseState(url.searchParams.get("state"));
   if (!code || !state) return new Response("missing code/state", { status: 400 });
 
   try {
@@ -44,7 +48,7 @@ Deno.serve(async (req) => {
         .from("connected_accounts")
         .upsert(
           {
-            user_id: state,
+            user_id: state.user_id,
             broker: "schwab",
             account_label: `Schwab ${sa.type ?? "Account"}`,
             account_type: (sa.type ?? "individual").toLowerCase().includes("ira") ? "ira" : "individual",
@@ -82,10 +86,75 @@ Deno.serve(async (req) => {
       }
     }
 
-    const appUrl = Deno.env.get("APP_URL") ?? "/";
-    return Response.redirect(`${appUrl}/accounts?connected=1`, 302);
+    const redirectUrl = new URL(state.return_to ?? defaultReturnTo());
+    redirectUrl.searchParams.set("connected", "1");
+    return Response.redirect(redirectUrl.toString(), 302);
   } catch (e) {
     console.error("schwab-oauth error", e);
     return new Response("oauth failed", { status: 500 });
   }
 });
+
+interface SchwabOAuthState {
+  user_id: string;
+  return_to: string | null;
+}
+
+function encodeState(state: SchwabOAuthState): string {
+  return btoa(JSON.stringify(state))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replaceAll("=", "");
+}
+
+function parseState(raw: string | null): SchwabOAuthState | null {
+  if (!raw) return null;
+
+  // Backward compatibility for older links where state was just the user id.
+  if (/^[0-9a-f-]{36}$/i.test(raw)) {
+    return { user_id: raw, return_to: defaultReturnTo() };
+  }
+
+  try {
+    const padded = raw.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(raw.length / 4) * 4, "=");
+    const parsed = JSON.parse(atob(padded));
+    if (!parsed?.user_id || typeof parsed.user_id !== "string") return null;
+
+    return {
+      user_id: parsed.user_id,
+      return_to: safeReturnTo(parsed.return_to),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function safeReturnTo(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+
+  try {
+    const u = new URL(value);
+    if (u.protocol !== "https:" && u.hostname !== "localhost") return null;
+    if (u.pathname !== "/accounts") u.pathname = "/accounts";
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+function defaultReturnTo(): string {
+  const appUrl = Deno.env.get("APP_URL");
+  if (!appUrl) return "http://localhost:3000/accounts";
+
+  try {
+    const u = new URL(appUrl);
+    u.pathname = "/accounts";
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return "http://localhost:3000/accounts";
+  }
+}

@@ -25,6 +25,7 @@ export async function GET(request: Request) {
   const authorizeUrl = new URL("/functions/v1/schwab-oauth", supabaseUrl);
   authorizeUrl.searchParams.set("action", "authorize");
   authorizeUrl.searchParams.set("user_id", user.id);
+  authorizeUrl.searchParams.set("return_to", `${origin}/accounts`);
 
   return NextResponse.redirect(authorizeUrl);
 }
