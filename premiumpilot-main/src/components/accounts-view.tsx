@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import type { AccountBalance, ConnectedAccount } from "@/lib/types";
 import { fmtCurrency0, fmtRelativeTime } from "@/lib/format";
-import { CheckCircle2, AlertTriangle, Plus } from "lucide-react";
+import { CheckCircle2, AlertTriangle, Plus, Trash2 } from "lucide-react";
 
 const TYPE_LABEL: Record<ConnectedAccount["account_type"], string> = {
   individual: "Individual",
@@ -28,16 +28,12 @@ export function AccountsView({
   const router = useRouter();
   const [combined, setCombined] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<ConnectedAccount | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const balanceFor = (id: string) => balances.find((b) => b.connected_account_id === id);
   const totalNetLiq = balances.reduce((s, b) => s + b.net_liquidation_value, 0);
 
   async function removeAccount(account: ConnectedAccount) {
-    const label = account.account_label || "this Schwab account";
-    if (!window.confirm(`Remove ${label}? This deletes synced balances and positions from PremiumPilot.`)) {
-      return;
-    }
-
     setRemoveError(null);
     setRemovingId(account.id);
     try {
@@ -50,6 +46,7 @@ export function AccountsView({
         throw new Error(body?.error ?? "Could not remove account");
       }
 
+      setPendingRemoval(null);
       router.refresh();
     } catch (error) {
       setRemoveError(error instanceof Error ? error.message : "Could not remove account");
@@ -127,7 +124,7 @@ export function AccountsView({
                     variant="outline"
                     size="sm"
                     disabled={removingId === a.id}
-                    onClick={() => removeAccount(a)}
+                    onClick={() => setPendingRemoval(a)}
                   >
                     {removingId === a.id ? "Removing..." : "Remove"}
                   </Button>
@@ -157,6 +154,43 @@ export function AccountsView({
           </CardContent>
         </Card>
       </div>
+
+      {pendingRemoval && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
+          <Card className="w-full max-w-md shadow-lg">
+            <CardContent className="space-y-5 p-6">
+              <div className="flex items-start gap-3">
+                <div className="rounded-full bg-destructive/10 p-2 text-destructive">
+                  <Trash2 className="size-5" />
+                </div>
+                <div className="space-y-1">
+                  <p className="font-semibold">Remove Schwab account?</p>
+                  <p className="text-sm text-muted-foreground">
+                    This removes {pendingRemoval.account_label || "this Schwab account"} from PremiumPilot and
+                    deletes synced balances, transactions, and positions.
+                  </p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  disabled={removingId === pendingRemoval.id}
+                  onClick={() => setPendingRemoval(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={removingId === pendingRemoval.id}
+                  onClick={() => removeAccount(pendingRemoval)}
+                >
+                  {removingId === pendingRemoval.id ? "Removing..." : "Remove"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
