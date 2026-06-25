@@ -18,6 +18,8 @@ export default async function CashPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard label="Current Cash" value={fmtCurrency0(c.currentCash)} />
+        <StatCard label="Cash Available to Invest" value={fmtCurrency0(c.cashAvailableForTrading)} />
+        <StatCard label="Available Funds" value={fmtCurrency0(c.availableFunds)} />
         <StatCard label="Buying Power" value={fmtCurrency0(c.buyingPower)} />
         <StatCard label="Capital Reserved" value={fmtCurrency0(c.capitalReserved)} />
         <StatCard label="Capital Utilization" value={fmtPct(c.utilizationPct, 0)} />

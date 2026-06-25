@@ -116,7 +116,7 @@ export function AccountsView({
                 <Separator />
                 <div className="grid grid-cols-3 gap-2 text-sm">
                   <Metric label="Net Liq." value={bal ? fmtCurrency0(bal.net_liquidation_value) : "—"} />
-                  <Metric label="Cash" value={bal ? fmtCurrency0(bal.cash_balance) : "—"} />
+                  <Metric label="Cash to Invest" value={bal ? fmtCurrency0(bal.cash_available_for_trading) : "—"} />
                   <Metric label="Buying Pwr" value={bal ? fmtCurrency0(bal.buying_power) : "—"} />
                 </div>
                 <div className="flex items-center justify-between">

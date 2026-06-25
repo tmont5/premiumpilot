@@ -13,11 +13,11 @@ export default async function IncomePage() {
 
   return (
     <>
-      <PageHeader title="Income" description="Premium collected and progress toward your annual goal." />
+      <PageHeader title="Income" description="Realized options gains and progress toward your annual goal." />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="This Month" value={fmtCurrency0(inc.thisMonth)} tone="success" />
-        <StatCard label="Year To Date" value={fmtCurrency0(inc.ytd)} />
+        <StatCard label="This Month Realized" value={fmtCurrency0(inc.thisMonth)} tone="success" />
+        <StatCard label="YTD Realized" value={fmtCurrency0(inc.ytd)} />
         <StatCard label="Rolling 12-Month" value={fmtCurrency0(inc.rolling12)} />
         <StatCard label="Projected Annual" value={fmtCurrency0(inc.projectedAnnual)} />
       </div>
@@ -39,10 +39,10 @@ export default async function IncomePage() {
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Premium Collected — Trailing 12 Months</CardTitle>
+          <CardTitle>Realized Gains — Trailing 12 Months</CardTitle>
         </CardHeader>
         <CardContent className="pt-2">
-          <IncomeChart history={pf.premiumHistory} />
+          <IncomeChart history={pf.incomeHistory} />
         </CardContent>
       </Card>
     </>
