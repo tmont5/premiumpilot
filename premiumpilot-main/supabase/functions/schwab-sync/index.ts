@@ -8,7 +8,16 @@
 // Dashboard reads persisted snapshots, so it stays fast between syncs.
 import { adminClient } from "../_shared/db.ts";
 import { decryptToken, encryptToken } from "../_shared/crypto.ts";
-import { getAccounts, mapPositions, refreshTokens } from "../_shared/schwab.ts";
+import {
+  accountHashByNumber,
+  getAccount,
+  getAccountNumbers,
+  getAccounts,
+  getTransactions,
+  mapPositions,
+  mapTransactions,
+  refreshTokens,
+} from "../_shared/schwab.ts";
 import { alertsForPositions, resolveStatus } from "../_shared/engine.ts";
 
 const REFRESH_SKEW_MS = 5 * 60 * 1000; // refresh if expiring within 5 min
@@ -17,7 +26,7 @@ Deno.serve(async () => {
   const db = adminClient();
   const { data: accounts, error } = await db
     .from("connected_accounts")
-    .select("id, user_id, schwab_account_id, encrypted_access_token, encrypted_refresh_token, token_expires_at, needs_reauth");
+    .select("id, user_id, schwab_account_id, schwab_account_hash, encrypted_access_token, encrypted_refresh_token, token_expires_at, needs_reauth");
   if (error) return json({ error: error.message }, 500);
 
   const results: Record<string, string> = {};
@@ -44,6 +53,7 @@ Deno.serve(async () => {
       }
 
       const raw = await getAccounts(accessToken);
+      const accountHashes = accountHashByNumber(await getAccountNumbers(accessToken));
       // deno-lint-ignore no-explicit-any
       const account = (raw as any[]).find(
         (a) => a.securitiesAccount?.accountNumber === acct.schwab_account_id
@@ -51,17 +61,26 @@ Deno.serve(async () => {
       // deno-lint-ignore no-explicit-any
       const sa: any = (account as any)?.securitiesAccount ?? {};
       const bal = sa.currentBalances ?? {};
+      const accountHash = accountHashes[String(sa.accountNumber)] ?? acct.schwab_account_hash;
+      if (accountHash && accountHash !== acct.schwab_account_hash) {
+        await db.from("connected_accounts").update({ schwab_account_hash: accountHash }).eq("id", acct.id);
+      }
+      const accountWithPositions = accountHash
+        ? await accountDetailForPositions(accessToken, accountHash, account)
+        : account;
 
       // Balance snapshot.
       await db.from("account_balances").insert({
         connected_account_id: acct.id,
         net_liquidation_value: bal.liquidationValue ?? 0,
         cash_balance: bal.cashBalance ?? 0,
+        cash_available_for_trading: bal.cashAvailableForTrading ?? bal.cashBalance ?? 0,
+        available_funds: bal.availableFunds ?? bal.cashAvailableForTrading ?? bal.cashBalance ?? 0,
         buying_power: bal.buyingPower ?? bal.cashAvailableForTrading ?? 0,
       });
 
       // Positions: map, compute status, replace set.
-      const mapped = mapPositions(account, {}); // underlying prices resolved upstream in production
+      const mapped = mapPositions(accountWithPositions, {}); // underlying prices resolved upstream in production
       await db.from("positions").delete().eq("connected_account_id", acct.id);
       if (mapped.length) {
         await db.from("positions").insert(
@@ -81,6 +100,10 @@ Deno.serve(async () => {
         );
       }
 
+      if (accountHash) {
+        await syncTransactions(db, accessToken, acct.id, acct.user_id, accountHash);
+      }
+
       await db.from("connected_accounts").update({ last_synced_at: new Date().toISOString() }).eq("id", acct.id);
       results[acct.id] = "ok";
     } catch (e) {
@@ -95,4 +118,38 @@ Deno.serve(async () => {
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+async function accountDetailForPositions(accessToken: string, accountHash: string, fallback: unknown) {
+  try {
+    return await getAccount(accessToken, accountHash, true);
+  } catch (error) {
+    console.error("sync account detail positions fetch failed", error);
+    return fallback;
+  }
+}
+
+async function syncTransactions(
+  db: ReturnType<typeof adminClient>,
+  accessToken: string,
+  connectedAccountId: string,
+  userId: string,
+  accountHash: string
+) {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
+  const end = now.toISOString();
+  const raw = await getTransactions(accessToken, accountHash, start, end);
+  const mapped = mapTransactions(raw as any[]);
+  if (!mapped.length) return;
+
+  const { error } = await db.from("account_transactions").upsert(
+    mapped.map((tx) => ({
+      connected_account_id: connectedAccountId,
+      user_id: userId,
+      ...tx,
+    })),
+    { onConflict: "connected_account_id,schwab_activity_id" }
+  );
+  if (error) throw error;
 }

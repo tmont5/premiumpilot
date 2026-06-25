@@ -11,7 +11,7 @@ import {
 import type { PremiumHistoryEntry } from "@/lib/types";
 import { fmtCurrency0 } from "@/lib/format";
 
-// Aggregates realized premium into the trailing 12 calendar months.
+// Aggregates realized income into the trailing 12 calendar months.
 export function IncomeChart({ history }: { history: PremiumHistoryEntry[] }) {
   const now = new Date();
   const buckets: { label: string; key: string; total: number }[] = [];
