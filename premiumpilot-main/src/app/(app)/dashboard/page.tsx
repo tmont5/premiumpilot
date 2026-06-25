@@ -22,6 +22,7 @@ export default async function DashboardPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Net Liquidation Value" value={fmtCurrency0(t.netLiquidationValue)} />
         <StatCard label="Cash Available" value={fmtCurrency0(t.cashAvailable)} />
+        <StatCard label="Cash to Invest" value={fmtCurrency0(t.cashAvailableForTrading)} />
         <StatCard label="Capital Utilized" value={fmtPct(t.capitalUtilizationPct, 0)} />
         <StatCard label="Open Positions" value={String(t.openPositions)} />
         <StatCard label="Monthly Premium" value={fmtCurrency0(t.monthlyPremium)} tone="success" />

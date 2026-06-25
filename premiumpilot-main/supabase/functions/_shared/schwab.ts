@@ -93,6 +93,34 @@ export function getOrders(accessToken: string, accountHash: string) {
   return authedGet(`/accounts/${accountHash}/orders`, accessToken);
 }
 
+export async function getAccountNumbers(accessToken: string) {
+  try {
+    return await authedGet("/accounts/accountNumbers", accessToken);
+  } catch (error) {
+    console.error("Schwab accountNumbers fetch failed", error);
+    return [];
+  }
+}
+
+export function getTransactions(accessToken: string, accountHash: string, startDate: string, endDate: string) {
+  const params = new URLSearchParams({
+    startDate,
+    endDate,
+    types: "TRADE",
+  });
+  return authedGet(`/accounts/${accountHash}/transactions?${params.toString()}`, accessToken);
+}
+
+export function accountHashByNumber(accountNumbers: any[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const row of accountNumbers ?? []) {
+    const accountNumber = row.accountNumber ?? row.account_number;
+    const hash = row.hashValue ?? row.hash_value;
+    if (accountNumber && hash) out[String(accountNumber)] = String(hash);
+  }
+  return out;
+}
+
 // Map a Schwab account's option positions into our `positions` insert shape.
 // Schwab returns securitiesAccount.positions[]; option instruments carry
 // putCall, strikePrice, and underlyingSymbol on the instrument.
@@ -142,6 +170,61 @@ export function mapPositions(account: any, underlyingPrices: Record<string, numb
   return out;
 }
 
+export interface MappedTransaction {
+  schwab_activity_id: string;
+  type: string | null;
+  status: string | null;
+  description: string | null;
+  symbol: string | null;
+  asset_type: string | null;
+  transaction_time: string;
+  net_amount: number;
+  realized_gain_loss: number | null;
+  fees: number | null;
+  price: number | null;
+  quantity: number | null;
+  raw: any;
+}
+
+export function mapTransactions(transactions: any[]): MappedTransaction[] {
+  const out: MappedTransaction[] = [];
+  for (const tx of transactions ?? []) {
+    const item = Array.isArray(tx.transferItems) ? tx.transferItems[0] : null;
+    const instrument = item?.instrument ?? tx.instrument ?? {};
+    const time = tx.time ?? tx.transactionDate ?? tx.settlementDate ?? tx.orderDate;
+    if (!time) continue;
+
+    out.push({
+      schwab_activity_id: transactionId(tx),
+      type: nullableString(tx.type),
+      status: nullableString(tx.status),
+      description: nullableString(tx.description),
+      symbol: nullableString(instrument.symbol),
+      asset_type: nullableString(instrument.assetType),
+      transaction_time: new Date(time).toISOString(),
+      net_amount: number(tx.netAmount ?? tx.net_amount),
+      realized_gain_loss: nullableNumber(
+        tx.realizedGainLoss ?? tx.realized_gain_loss ?? tx.realizedGainLossAmount
+      ),
+      fees: nullableNumber(tx.fees ?? tx.fee),
+      price: nullableNumber(item?.price ?? tx.price),
+      quantity: nullableNumber(item?.amount ?? item?.quantity ?? tx.quantity),
+      raw: tx,
+    });
+  }
+  return out;
+}
+
+export function optionPremiumEvents(transactions: MappedTransaction[]) {
+  return transactions
+    .filter((tx) => tx.asset_type === "OPTION" && tx.net_amount > 0)
+    .map((tx) => ({
+      ticker: parseUnderlyingFromOptionSymbol(tx.symbol) ?? tx.symbol ?? "OPTION",
+      premium_amount: tx.net_amount,
+      realized_at: tx.transaction_time,
+    }));
+}
+
 function optionExpiration(inst: any): string | null {
   const direct = inst.optionExpirationDate ?? inst.expirationDate ?? inst.maturityDate;
   if (typeof direct === "string" && /^\d{4}-\d{2}-\d{2}/.test(direct)) return direct.slice(0, 10);
@@ -160,4 +243,30 @@ function parseUnderlyingFromOptionSymbol(symbol: unknown): string | null {
   if (typeof symbol !== "string") return null;
   const match = symbol.match(/^([A-Z.]+)\s+\d{6}[CP]\d{8}$/);
   return match?.[1] ?? null;
+}
+
+function transactionId(tx: any): string {
+  return String(
+    tx.activityId ??
+      tx.activity_id ??
+      tx.transactionId ??
+      tx.transaction_id ??
+      tx.orderId ??
+      [tx.time, tx.type, tx.description, tx.netAmount].filter(Boolean).join(":")
+  );
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function number(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") return Number(value) || 0;
+  return 0;
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  return number(value);
 }

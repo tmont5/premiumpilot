@@ -5,7 +5,16 @@
 //
 // Tokens are encrypted with AES-256-GCM before they touch the database.
 import { adminClient } from "../_shared/db.ts";
-import { authorizeUrl, exchangeCode, getAccounts, mapPositions } from "../_shared/schwab.ts";
+import {
+  accountHashByNumber,
+  authorizeUrl,
+  exchangeCode,
+  getAccountNumbers,
+  getAccounts,
+  getTransactions,
+  mapPositions,
+  mapTransactions,
+} from "../_shared/schwab.ts";
 import { encryptToken } from "../_shared/crypto.ts";
 import { resolveStatus } from "../_shared/engine.ts";
 
@@ -32,6 +41,7 @@ Deno.serve(async (req) => {
   try {
     const tokens = await exchangeCode(code);
     const accounts = await getAccounts(tokens.access_token);
+    const accountHashes = accountHashByNumber(await getAccountNumbers(tokens.access_token));
     const db = adminClient();
 
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
@@ -50,6 +60,7 @@ Deno.serve(async (req) => {
         account_label: `Schwab ${sa.type ?? "Account"}`,
         account_type: (sa.type ?? "individual").toLowerCase().includes("ira") ? "ira" : "individual",
         schwab_account_id: sa.accountNumber ?? null,
+        schwab_account_hash: accountHashes[String(sa.accountNumber)] ?? null,
         encrypted_access_token: encAccess,
         encrypted_refresh_token: encRefresh,
         token_expires_at: expiresAt,
@@ -61,6 +72,8 @@ Deno.serve(async (req) => {
         connected_account_id: connected.id,
         net_liquidation_value: bal.liquidationValue ?? 0,
         cash_balance: bal.cashBalance ?? 0,
+        cash_available_for_trading: bal.cashAvailableForTrading ?? bal.cashBalance ?? 0,
+        available_funds: bal.availableFunds ?? bal.cashAvailableForTrading ?? bal.cashBalance ?? 0,
         buying_power: bal.buyingPower ?? bal.cashAvailableForTrading ?? 0,
       });
       if (balanceError) console.error("schwab-oauth balance insert failed", balanceError);
@@ -77,6 +90,11 @@ Deno.serve(async (req) => {
           }))
         );
         if (positionError) console.error("schwab-oauth position insert failed", positionError);
+      }
+
+      const accountHash = accountHashes[String(sa.accountNumber)];
+      if (accountHash) {
+        await syncTransactions(db, tokens.access_token, connected.id, state.user_id, accountHash);
       }
     }
 
@@ -95,6 +113,7 @@ interface ConnectedAccountPayload {
   account_label: string;
   account_type: "individual" | "ira";
   schwab_account_id: string | null;
+  schwab_account_hash: string | null;
   encrypted_access_token: string;
   encrypted_refresh_token: string;
   token_expires_at: string;
@@ -132,6 +151,36 @@ async function saveConnectedAccount(db: ReturnType<typeof adminClient>, payload:
   const { data, error } = await db.from("connected_accounts").insert(payload).select("id").single();
   if (error) throw error;
   return data;
+}
+
+async function syncTransactions(
+  db: ReturnType<typeof adminClient>,
+  accessToken: string,
+  connectedAccountId: string,
+  userId: string,
+  accountHash: string
+) {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
+  const end = now.toISOString();
+
+  try {
+    const raw = await getTransactions(accessToken, accountHash, start, end);
+    const mapped = mapTransactions(raw as any[]);
+    if (!mapped.length) return;
+
+    const { error } = await db.from("account_transactions").upsert(
+      mapped.map((tx) => ({
+        connected_account_id: connectedAccountId,
+        user_id: userId,
+        ...tx,
+      })),
+      { onConflict: "connected_account_id,schwab_activity_id" }
+    );
+    if (error) console.error("schwab-oauth transaction upsert failed", error);
+  } catch (error) {
+    console.error("schwab-oauth transaction sync failed", error);
+  }
 }
 
 interface SchwabOAuthState {

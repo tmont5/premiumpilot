@@ -51,6 +51,8 @@ export const seedBalances: AccountBalance[] = [
     // + cash 27,461.53 - short option liabilities 8,742.50.
     net_liquidation_value: 65388,
     cash_balance: 27461.53,
+    cash_available_for_trading: 27461.53,
+    available_funds: 27461.53,
     buying_power: 27000,
     synced_at: recentSync,
   },

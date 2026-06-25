@@ -31,6 +31,7 @@ export interface ConnectedAccount {
   account_label: string;
   account_type: AccountType;
   schwab_account_id: string | null;
+  schwab_account_hash?: string | null;
   token_expires_at: string | null;
   last_synced_at: string | null;
   needs_reauth: boolean;
@@ -42,8 +43,28 @@ export interface AccountBalance {
   connected_account_id: string;
   net_liquidation_value: number;
   cash_balance: number;
+  cash_available_for_trading: number;
+  available_funds: number;
   buying_power: number;
   synced_at: string;
+}
+
+export interface AccountTransaction {
+  id: string;
+  user_id: string;
+  connected_account_id: string;
+  schwab_activity_id: string;
+  type: string | null;
+  status: string | null;
+  description: string | null;
+  symbol: string | null;
+  asset_type: string | null;
+  transaction_time: string;
+  net_amount: number;
+  realized_gain_loss: number | null;
+  fees: number | null;
+  price: number | null;
+  quantity: number | null;
 }
 
 // Raw position as imported/stored. Derived metrics computed at read time.

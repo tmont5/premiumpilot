@@ -1,5 +1,6 @@
 import type {
   AccountBalance,
+  AccountTransaction,
   ConnectedAccount,
   EnrichedPosition,
   PremiumHistoryEntry,
@@ -18,6 +19,7 @@ export interface PortfolioInput {
   balances: AccountBalance[];
   positions: Position[];
   premiumHistory: PremiumHistoryEntry[];
+  transactions: AccountTransaction[];
 }
 
 export interface PortfolioView {
@@ -26,11 +28,15 @@ export interface PortfolioView {
   balances: AccountBalance[];
   positions: EnrichedPosition[];
   premiumHistory: PremiumHistoryEntry[];
+  incomeHistory: PremiumHistoryEntry[];
+  transactions: AccountTransaction[];
   score: ScoreBreakdown;
   alerts: GeneratedAlert[];
   totals: {
     netLiquidationValue: number;
     cashAvailable: number;
+    cashAvailableForTrading: number;
+    availableFunds: number;
     buyingPower: number;
     capitalReserved: number;
     capitalUtilizationPct: number;
@@ -41,6 +47,8 @@ export interface PortfolioView {
   };
   cash: {
     currentCash: number;
+    cashAvailableForTrading: number;
+    availableFunds: number;
     buyingPower: number;
     capitalReserved: number;
     utilizationPct: number;
@@ -52,16 +60,19 @@ export interface PortfolioView {
     ytd: number;
     rolling12: number;
     projectedAnnual: number;
+    realizedPnlYtd: number;
     goal: number | null;
     goalProgressPct: number;
   };
 }
 
 export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): PortfolioView {
-  const { profile, accounts, balances, positions, premiumHistory } = input;
+  const { profile, accounts, balances, positions, premiumHistory, transactions } = input;
   const enriched = enrich(positions, now);
 
   const cashAvailable = sum(balances, (b) => b.cash_balance);
+  const cashAvailableForTrading = sum(balances, (b) => b.cash_available_for_trading);
+  const availableFunds = sum(balances, (b) => b.available_funds);
   const buyingPower = sum(balances, (b) => b.buying_power);
   const netLiq = sum(balances, (b) => b.net_liquidation_value);
   const capitalReserved = sum(positions, (p) => p.capital_requirement);
@@ -74,7 +85,8 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     0
   );
 
-  const income = buildIncome(premiumHistory, profile.income_goal_annual, now);
+  const incomeHistory = realizedIncomeEntries(premiumHistory, transactions);
+  const income = buildIncome(incomeHistory, profile.income_goal_annual, now);
   const score = computeScore({ positions: enriched, cashAvailable });
   const alerts = generateAlerts(enriched, { buyingPower, cashAvailable });
 
@@ -86,11 +98,15 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     balances,
     positions: enriched,
     premiumHistory,
+    incomeHistory,
+    transactions,
     score,
     alerts,
     totals: {
       netLiquidationValue: netLiq,
       cashAvailable,
+      cashAvailableForTrading,
+      availableFunds,
       buyingPower,
       capitalReserved,
       capitalUtilizationPct,
@@ -101,6 +117,8 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     },
     cash: {
       currentCash: cashAvailable,
+      cashAvailableForTrading,
+      availableFunds,
       buyingPower,
       capitalReserved,
       utilizationPct: capitalUtilizationPct,
@@ -125,10 +143,35 @@ function buildIncome(history: PremiumHistoryEntry[], goal: number | null, now: D
     if (t >= startOfYear) ytd += e.premium_amount;
     if (t >= yearAgo) rolling12 += e.premium_amount;
   }
+
   // Projected annual income = trailing-12-month run rate (PRD §9.5 default).
   const projectedAnnual = rolling12;
   const goalProgressPct = goal && goal > 0 ? (ytd / goal) * 100 : 0;
-  return { thisMonth, ytd, rolling12, projectedAnnual, goal, goalProgressPct };
+  return { thisMonth, ytd, rolling12, projectedAnnual, realizedPnlYtd: ytd, goal, goalProgressPct };
+}
+
+function realizedIncomeEntries(
+  history: PremiumHistoryEntry[],
+  transactions: AccountTransaction[]
+): PremiumHistoryEntry[] {
+  const realized = transactions
+    .filter((tx) => tx.realized_gain_loss != null)
+    .map((tx) => ({
+      id: tx.id,
+      user_id: tx.user_id,
+      connected_account_id: tx.connected_account_id,
+      ticker: parseUnderlying(tx.symbol) ?? tx.symbol ?? "OPTION",
+      premium_amount: tx.realized_gain_loss ?? 0,
+      realized_at: tx.transaction_time,
+    }));
+
+  return realized.length ? realized : history;
+}
+
+function parseUnderlying(symbol: string | null): string | null {
+  if (!symbol) return null;
+  const match = symbol.match(/^([A-Z.]+)\s+\d{6}[CP]\d{8}$/);
+  return match?.[1] ?? symbol;
 }
 
 function sum<T>(items: T[], pick: (t: T) => number): number {

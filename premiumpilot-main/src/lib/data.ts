@@ -9,6 +9,7 @@ import {
 import { createClient } from "./supabase/server";
 import type {
   AccountBalance,
+  AccountTransaction,
   ConnectedAccount,
   Position,
   PremiumHistoryEntry,
@@ -33,6 +34,7 @@ export async function getPortfolio(): Promise<PortfolioView> {
     balances: seedBalances,
     positions: seedPositions,
     premiumHistory: seedPremiumHistory,
+    transactions: [],
   });
 }
 
@@ -45,7 +47,7 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [profileResult, accountsResult, premiumResult] = await Promise.all([
+  const [profileResult, accountsResult, premiumResult, transactionsResult] = await Promise.all([
     supabase
       .from("profiles")
       .select(
@@ -65,11 +67,19 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
       .select("id, user_id, connected_account_id, ticker, premium_amount, realized_at")
       .eq("user_id", user.id)
       .order("realized_at", { ascending: false }),
+    supabase
+      .from("account_transactions")
+      .select(
+        "id, user_id, connected_account_id, schwab_activity_id, type, status, description, symbol, asset_type, transaction_time, net_amount, realized_gain_loss, fees, price, quantity"
+      )
+      .eq("user_id", user.id)
+      .order("transaction_time", { ascending: false }),
   ]);
 
   if (profileResult.error) throw profileResult.error;
   if (accountsResult.error) throw accountsResult.error;
   if (premiumResult.error) throw premiumResult.error;
+  if (transactionsResult.error && transactionsResult.error.code !== "42P01") throw transactionsResult.error;
 
   const accountIds = (accountsResult.data ?? []).map((account) => account.id);
   const [balancesResult, positionsResult] = await Promise.all([
@@ -77,7 +87,7 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
       ? supabase
           .from("account_balances")
           .select(
-            "id, connected_account_id, net_liquidation_value, cash_balance, buying_power, synced_at"
+            "id, connected_account_id, net_liquidation_value, cash_balance, cash_available_for_trading, available_funds, buying_power, synced_at"
           )
           .in("connected_account_id", accountIds)
           .order("synced_at", { ascending: false })
@@ -102,6 +112,7 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
     balances: latestBalances(balancesResult.data ?? []),
     positions: (positionsResult.data ?? []).map(normalizePosition),
     premiumHistory: (premiumResult.data ?? []).map(normalizePremium),
+    transactions: ((transactionsResult.data ?? []) as Record<string, unknown>[]).map(normalizeTransaction),
   });
 }
 
@@ -130,6 +141,8 @@ function latestBalances(rows: Record<string, unknown>[]): AccountBalance[] {
       connected_account_id: accountId,
       net_liquidation_value: number(row.net_liquidation_value),
       cash_balance: number(row.cash_balance),
+      cash_available_for_trading: number(row.cash_available_for_trading ?? row.cash_balance),
+      available_funds: number(row.available_funds ?? row.cash_available_for_trading ?? row.cash_balance),
       buying_power: number(row.buying_power),
       synced_at: String(row.synced_at),
     });
@@ -168,6 +181,26 @@ function normalizePremium(row: Record<string, unknown>): PremiumHistoryEntry {
   };
 }
 
+function normalizeTransaction(row: Record<string, unknown>): AccountTransaction {
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id),
+    connected_account_id: String(row.connected_account_id),
+    schwab_activity_id: String(row.schwab_activity_id),
+    type: nullableString(row.type),
+    status: nullableString(row.status),
+    description: nullableString(row.description),
+    symbol: nullableString(row.symbol),
+    asset_type: nullableString(row.asset_type),
+    transaction_time: String(row.transaction_time),
+    net_amount: number(row.net_amount),
+    realized_gain_loss: row.realized_gain_loss == null ? null : number(row.realized_gain_loss),
+    fees: row.fees == null ? null : number(row.fees),
+    price: row.price == null ? null : number(row.price),
+    quantity: row.quantity == null ? null : number(row.quantity),
+  };
+}
+
 function number(value: unknown): number {
   if (typeof value === "number") return value;
   if (typeof value === "string") return Number(value);
@@ -177,4 +210,8 @@ function number(value: unknown): number {
 function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   return number(value);
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
 }
