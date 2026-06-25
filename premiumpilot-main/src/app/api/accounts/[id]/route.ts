@@ -25,20 +25,43 @@ export async function DELETE(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data, error } = await supabase
+  const { data: account, error: accountLookupError } = await supabase
+    .from("connected_accounts")
+    .select("id")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (accountLookupError) {
+    return NextResponse.json({ error: "Could not verify account ownership" }, { status: 500 });
+  }
+
+  if (!account) {
+    return NextResponse.json({ error: "Account not found" }, { status: 404 });
+  }
+
+  const cleanupSteps = [
+    supabase.from("account_transactions").delete().eq("connected_account_id", id).eq("user_id", user.id),
+    supabase.from("account_balances").delete().eq("connected_account_id", id),
+    supabase.from("positions").delete().eq("connected_account_id", id),
+    supabase.from("premium_history").update({ connected_account_id: null }).eq("connected_account_id", id).eq("user_id", user.id),
+  ];
+
+  for (const step of cleanupSteps) {
+    const { error } = await step;
+    if (error) {
+      return NextResponse.json({ error: "Could not remove account data" }, { status: 500 });
+    }
+  }
+
+  const { error } = await supabase
     .from("connected_accounts")
     .delete()
     .eq("id", id)
-    .eq("user_id", user.id)
-    .select("id")
-    .maybeSingle();
+    .eq("user_id", user.id);
 
   if (error) {
     return NextResponse.json({ error: "Could not remove account" }, { status: 500 });
-  }
-
-  if (!data) {
-    return NextResponse.json({ error: "Account not found" }, { status: 404 });
   }
 
   return NextResponse.json({ ok: true });
