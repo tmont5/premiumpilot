@@ -2,6 +2,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableFooter,
   TableHead,
   TableHeader,
   TableRow,
@@ -18,8 +19,10 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+// "Short Put" rather than "CSP": these are sold puts, but not all are cash-secured
+// (e.g. margin/naked), so the label avoids implying a cash-secured structure.
 const STRATEGY_LABEL: Record<EnrichedPosition["strategy"], string> = {
-  cash_secured_put: "CSP",
+  cash_secured_put: "Short Put",
   covered_call: "Cov. Call",
 };
 
@@ -38,6 +41,8 @@ function action(status: PositionStatus): { label: string; show: boolean } {
 }
 
 export function PositionsTable({ positions }: { positions: EnrichedPosition[] }) {
+  const totalPremium = positions.reduce((sum, p) => sum + p.premium_collected, 0);
+  const totalCapital = positions.reduce((sum, p) => sum + p.capital_requirement, 0);
   return (
     <Table>
       <TableHeader>
@@ -52,7 +57,7 @@ export function PositionsTable({ positions }: { positions: EnrichedPosition[] })
           <TableHead className="text-right">Profit Capt.</TableHead>
           <TableHead className="text-right">ROC</TableHead>
           <TableHead className="text-right">Annual. Ret.</TableHead>
-          <TableHead className="text-right">Prob. ITM</TableHead>
+          <TableHead className="text-right">Prob. Assigned</TableHead>
           <TableHead className="text-right">Dist. Strike</TableHead>
           <TableHead className="text-right">Capital</TableHead>
           <TableHead>Status</TableHead>
@@ -84,7 +89,7 @@ export function PositionsTable({ positions }: { positions: EnrichedPosition[] })
               </TableCell>
               <TableCell className="text-right tabular-nums">{fmtPctFromFraction(m.returnOnCapital)}</TableCell>
               <TableCell className="text-right tabular-nums">{fmtPctFromFraction(m.annualizedReturn)}</TableCell>
-              <TableCell className="text-right tabular-nums">{fmtPctFromFraction(m.probabilityItm, 0)}</TableCell>
+              <TableCell className="text-right tabular-nums">{fmtPctFromFraction(m.assignmentRisk, 0)}</TableCell>
               <TableCell
                 className={cn(
                   "text-right tabular-nums",
@@ -110,6 +115,17 @@ export function PositionsTable({ positions }: { positions: EnrichedPosition[] })
           );
         })}
       </TableBody>
+      {positions.length > 0 && (
+        <TableFooter>
+          <TableRow>
+            <TableCell colSpan={5}>Total</TableCell>
+            <TableCell className="text-right tabular-nums">{fmtCurrency0(totalPremium)}</TableCell>
+            <TableCell colSpan={6} />
+            <TableCell className="text-right tabular-nums">{fmtCurrency0(totalCapital)}</TableCell>
+            <TableCell colSpan={2} />
+          </TableRow>
+        </TableFooter>
+      )}
     </Table>
   );
 }
