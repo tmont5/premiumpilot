@@ -116,6 +116,12 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+const TX_LOOKBACK_DAYS = 400; // > 12 months so rolling-12 income is fully covered
+const TX_SLICE_DAYS = 360; // Schwab caps each request at ~1 year
+// Realized option income needs both executed trades and the expiration/assignment
+// records (where a sold option's premium is finally realized).
+const TX_TYPES = ["TRADE", "RECEIVE_AND_DELIVER"];
+
 async function syncTransactions(
   db: ReturnType<typeof adminClient>,
   accessToken: string,
@@ -123,20 +129,43 @@ async function syncTransactions(
   userId: string,
   accountHash: string
 ) {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1)).toISOString();
-  const end = now.toISOString();
-  const raw = await getTransactions(accessToken, accountHash, start, end);
-  const mapped = mapTransactions(raw as any[]);
-  if (!mapped.length) return;
+  const raw: any[] = [];
+  for (const w of transactionWindows(new Date(), TX_LOOKBACK_DAYS, TX_SLICE_DAYS)) {
+    for (const type of TX_TYPES) {
+      try {
+        const page = await getTransactions(accessToken, accountHash, w.start, w.end, type);
+        if (Array.isArray(page)) raw.push(...page);
+      } catch (e) {
+        console.error("transaction fetch failed", type, w.start, e);
+      }
+    }
+  }
 
-  const { error } = await db.from("account_transactions").upsert(
-    mapped.map((tx) => ({
-      connected_account_id: connectedAccountId,
-      user_id: userId,
-      ...tx,
-    })),
-    { onConflict: "connected_account_id,schwab_activity_id" }
-  );
+  // Overlapping windows/types can repeat an activity; dedupe before upserting.
+  const seen = new Set<string>();
+  const rows = [];
+  for (const tx of mapTransactions(raw)) {
+    if (seen.has(tx.schwab_activity_id)) continue;
+    seen.add(tx.schwab_activity_id);
+    rows.push({ connected_account_id: connectedAccountId, user_id: userId, ...tx });
+  }
+  if (!rows.length) return;
+
+  const { error } = await db
+    .from("account_transactions")
+    .upsert(rows, { onConflict: "connected_account_id,schwab_activity_id" });
   if (error) throw error;
+}
+
+// Trailing date windows (newest last), each within Schwab's per-request range cap.
+function transactionWindows(now: Date, lookbackDays: number, sliceDays: number) {
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const windows: { start: string; end: string }[] = [];
+  let cursor = now.getTime() - lookbackDays * MS_PER_DAY;
+  while (cursor < now.getTime()) {
+    const end = Math.min(cursor + sliceDays * MS_PER_DAY, now.getTime());
+    windows.push({ start: new Date(cursor).toISOString(), end: new Date(end).toISOString() });
+    cursor = end;
+  }
+  return windows;
 }

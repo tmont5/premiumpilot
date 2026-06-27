@@ -16,6 +16,7 @@ import { enrich, probabilityItm } from "./calc";
 import { computeScore } from "./score";
 import { generateAlerts, type GeneratedAlert } from "./alerts";
 import { enrichAssignedHoldings, buildPnl } from "./pnl";
+import { realizedIncomeFromTrades } from "./trades";
 import { ENGINE_CONFIG } from "./config";
 
 export interface PortfolioInput {
@@ -98,7 +99,7 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     0
   );
 
-  const incomeHistory = realizedIncomeEntries(premiumHistory, transactions);
+  const incomeHistory = realizedIncomeEntries(premiumHistory, trades);
   const income = buildIncome(incomeHistory, profile.income_goal_annual, now);
   const score = computeScore({ positions: enriched, cashAvailable });
   const alerts = generateAlerts(enriched, { buyingPower, cashAvailable });
@@ -166,28 +167,15 @@ function buildIncome(history: PremiumHistoryEntry[], goal: number | null, now: D
   return { thisMonth, ytd, rolling12, projectedAnnual, realizedPnlYtd: ytd, goal, goalProgressPct };
 }
 
+// Realized income for the rollups. Pre-populated premium_history (demo, or any
+// stored rows) wins; otherwise income is reconstructed from closed trades, which
+// are themselves derived from synced transactions.
 function realizedIncomeEntries(
   history: PremiumHistoryEntry[],
-  transactions: AccountTransaction[]
+  trades: Trade[]
 ): PremiumHistoryEntry[] {
-  const realized = transactions
-    .filter((tx) => tx.realized_gain_loss != null)
-    .map((tx) => ({
-      id: tx.id,
-      user_id: tx.user_id,
-      connected_account_id: tx.connected_account_id,
-      ticker: parseUnderlying(tx.symbol) ?? tx.symbol ?? "OPTION",
-      premium_amount: tx.realized_gain_loss ?? 0,
-      realized_at: tx.transaction_time,
-    }));
-
-  return realized.length ? realized : history;
-}
-
-function parseUnderlying(symbol: string | null): string | null {
-  if (!symbol) return null;
-  const match = symbol.match(/^([A-Z.]+)\s+\d{6}[CP]\d{8}$/);
-  return match?.[1] ?? symbol;
+  if (history.length) return history;
+  return realizedIncomeFromTrades(trades);
 }
 
 function sum<T>(items: T[], pick: (t: T) => number): number {
