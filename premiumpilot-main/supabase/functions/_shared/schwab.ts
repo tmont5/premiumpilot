@@ -102,12 +102,18 @@ export async function getAccountNumbers(accessToken: string) {
   }
 }
 
-export function getTransactions(accessToken: string, accountHash: string, startDate: string, endDate: string) {
-  const params = new URLSearchParams({
-    startDate,
-    endDate,
-    types: "TRADE",
-  });
+// Fetch transactions in a date window. Schwab caps each request at ~1 year and
+// takes a single `types` value, so callers page by window and activity type.
+// Omitting `type` returns all activity types.
+export function getTransactions(
+  accessToken: string,
+  accountHash: string,
+  startDate: string,
+  endDate: string,
+  type?: string
+) {
+  const params = new URLSearchParams({ startDate, endDate });
+  if (type) params.set("types", type);
   return authedGet(`/accounts/${accountHash}/transactions?${params.toString()}`, accessToken);
 }
 
@@ -189,7 +195,11 @@ export interface MappedTransaction {
 export function mapTransactions(transactions: any[]): MappedTransaction[] {
   const out: MappedTransaction[] = [];
   for (const tx of transactions ?? []) {
-    const item = Array.isArray(tx.transferItems) ? tx.transferItems[0] : null;
+    const items = Array.isArray(tx.transferItems) ? tx.transferItems : [];
+    // Prefer the option leg: expirations/assignments (RECEIVE_AND_DELIVER) carry
+    // both an OPTION and an EQUITY transferItem, and we key realized P/L off the
+    // option contract.
+    const item = items.find((i: any) => i?.instrument?.assetType === "OPTION") ?? items[0] ?? null;
     const instrument = item?.instrument ?? tx.instrument ?? {};
     const time = tx.time ?? tx.transactionDate ?? tx.settlementDate ?? tx.orderDate;
     if (!time) continue;
