@@ -1,9 +1,12 @@
 import type {
   AccountBalance,
+  AssignedHolding,
   ConnectedAccount,
   PremiumHistoryEntry,
   Position,
   Profile,
+  Trade,
+  TradeOutcome,
 } from "./types";
 
 // Demo dataset reflecting the user's live Charles Schwab "Individual" account as
@@ -141,4 +144,96 @@ function buildPremiumHistory(): PremiumHistoryEntry[] {
     }
   }
   return entries;
+}
+
+// ── Trade history & P/L demo data (PRD §9.6) ────────────────────────────────
+
+// Stock currently held from put assignments (and shares backing covered calls).
+// cost_basis_per_share is the assignment strike; premium_credit is the cumulative
+// option premium collected against the lot, which lowers the effective breakeven.
+export const seedAssignedHoldings: AssignedHolding[] = [
+  // KHC put assigned at 26; premium since collected pulls breakeven to ~24.20.
+  // Underlying 23.675 -> still slightly underwater.
+  mkHolding("hold-khc", "KHC", 1000, 26, 1800, 23.675, 7),
+  // HOOD put assigned at 72; stock ran to 90.07 -> large gain. Now covered-called.
+  mkHolding("hold-hood", "HOOD", 200, 72, 900, 90.07, 9),
+  // ASST put assigned at 16; premium pulls breakeven to ~14.26, just below price.
+  mkHolding("hold-asst", "ASST", 345, 16, 600, 14.435, 5),
+];
+
+function mkHolding(
+  id: string,
+  ticker: string,
+  shares: number,
+  cost_basis_per_share: number,
+  premium_credit: number,
+  current_price: number,
+  monthsAgo: number
+): AssignedHolding {
+  return {
+    id,
+    connected_account_id: "acct-individual",
+    ticker,
+    shares,
+    cost_basis_per_share,
+    premium_credit,
+    acquired_at: new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - monthsAgo, 12)
+    ).toISOString(),
+    current_price,
+  };
+}
+
+// Closed option trades across the trailing year. Mix of outcomes so the history
+// table and cumulative-P/L chart show wins, an assignment, a roll, and a loss.
+export const seedTrades: Trade[] = [
+  // ticker, strategy, strike, contracts, premium, costToClose, outcome, closedMonthsAgo, openedMonthsAgo
+  mkTrade("t1", "SOFI", "cash_secured_put", 14, 10, 620, 0, "expired", 11, 12),
+  mkTrade("t2", "ARES", "cash_secured_put", 108, 1, 145, 35, "closed", 11, 12),
+  mkTrade("t3", "KHC", "cash_secured_put", 26, 5, 410, 0, "assigned", 10, 11),
+  mkTrade("t4", "PLTR", "cash_secured_put", 120, 1, 530, 110, "closed", 10, 11),
+  mkTrade("t5", "NOW", "cash_secured_put", 100, 1, 680, 0, "expired", 9, 10),
+  mkTrade("t6", "HOOD", "cash_secured_put", 72, 2, 540, 0, "assigned", 9, 10),
+  mkTrade("t7", "ORCL", "cash_secured_put", 185, 1, 720, 240, "closed", 8, 9),
+  mkTrade("t8", "CRM", "cash_secured_put", 175, 1, 610, 880, "closed", 8, 9), // bought back at a loss
+  mkTrade("t9", "ADBE", "covered_call", 240, 1, 480, 150, "rolled", 7, 8),
+  mkTrade("t10", "SOFI", "cash_secured_put", 15, 10, 700, 0, "expired", 6, 7),
+  mkTrade("t11", "ASST", "cash_secured_put", 16, 3, 360, 0, "assigned", 5, 6),
+  mkTrade("t12", "KHC", "covered_call", 25, 10, 540, 120, "closed", 4, 5),
+  mkTrade("t13", "ARES", "cash_secured_put", 110, 1, 130, 0, "expired", 3, 4),
+  mkTrade("t14", "PLTR", "cash_secured_put", 130, 1, 590, 180, "closed", 2, 3),
+  mkTrade("t15", "NOW", "cash_secured_put", 105, 1, 660, 0, "expired", 1, 2),
+  mkTrade("t16", "ORCL", "cash_secured_put", 190, 1, 540, 95, "closed", 0, 1),
+];
+
+function mkTrade(
+  id: string,
+  ticker: string,
+  strategy: Position["strategy"],
+  strike: number,
+  contracts: number,
+  premium_collected: number,
+  cost_to_close: number,
+  outcome: TradeOutcome,
+  closedMonthsAgo: number,
+  openedMonthsAgo: number
+): Trade {
+  return {
+    id,
+    connected_account_id: "acct-individual",
+    ticker,
+    strategy,
+    strike,
+    contracts,
+    opened_at: new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - openedMonthsAgo, 15)
+    ).toISOString(),
+    closed_at: new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - closedMonthsAgo, 17, 15)
+    ).toISOString(),
+    premium_collected,
+    cost_to_close,
+    realized_pnl: premium_collected - cost_to_close,
+    outcome,
+  };
 }

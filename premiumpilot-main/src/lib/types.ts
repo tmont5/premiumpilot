@@ -128,3 +128,58 @@ export interface ScoreBreakdown {
   timeRisk: number;
   assignmentRisk: number;
 }
+
+// How a closed option trade ended (PRD §9.6 — trade history & realized P/L).
+export type TradeOutcome = "expired" | "closed" | "assigned" | "rolled";
+
+// A completed (no longer open) option trade with its realized result. Demo trades
+// carry full open/close detail; live trades derived from account_transactions may
+// only know the realized P/L, so premium/cost fields are nullable.
+export interface Trade {
+  id: string;
+  connected_account_id: string;
+  ticker: string;
+  strategy: Strategy;
+  strike: number;
+  contracts: number;
+  opened_at: string | null;
+  closed_at: string; // ISO datetime the trade was realized
+  premium_collected: number | null; // total $ collected to open
+  cost_to_close: number | null; // total $ paid to close (0 if expired/assigned)
+  realized_pnl: number; // option-leg realized gain/loss
+  outcome: TradeOutcome;
+}
+
+// Stock acquired via assignment (or shares backing covered calls). Cost basis is
+// the assignment strike; premium_credit is the cumulative option premium that
+// effectively lowers that basis. Breakeven and live P/L are computed in pnl.ts.
+export interface AssignedHolding {
+  id: string;
+  connected_account_id: string;
+  ticker: string;
+  shares: number;
+  cost_basis_per_share: number; // strike at assignment
+  premium_credit: number; // total premium that reduces basis
+  acquired_at: string;
+  current_price: number;
+}
+
+export interface AssignedHoldingMetrics {
+  breakevenPerShare: number;
+  costBasisTotal: number;
+  netCostBasis: number; // cost basis less premium credit
+  marketValue: number;
+  unrealizedPnl: number;
+  unrealizedPnlPct: number;
+}
+
+export type EnrichedAssignedHolding = AssignedHolding & { metrics: AssignedHoldingMetrics };
+
+export interface PnlSummary {
+  realized: number; // sum of closed-trade realized P/L
+  unrealizedOptions: number; // open option positions marked to market
+  unrealizedStock: number; // assigned-holding stock P/L
+  unrealized: number; // unrealizedOptions + unrealizedStock
+  total: number; // realized + unrealized
+  cumulative: { label: string; key: string; realized: number; cumulative: number }[];
+}

@@ -1,16 +1,21 @@
 import type {
   AccountBalance,
   AccountTransaction,
+  AssignedHolding,
   ConnectedAccount,
+  EnrichedAssignedHolding,
   EnrichedPosition,
+  PnlSummary,
   PremiumHistoryEntry,
   Position,
   Profile,
   ScoreBreakdown,
+  Trade,
 } from "./types";
 import { enrich, probabilityItm } from "./calc";
 import { computeScore } from "./score";
 import { generateAlerts, type GeneratedAlert } from "./alerts";
+import { enrichAssignedHoldings, buildPnl } from "./pnl";
 import { ENGINE_CONFIG } from "./config";
 
 export interface PortfolioInput {
@@ -20,6 +25,8 @@ export interface PortfolioInput {
   positions: Position[];
   premiumHistory: PremiumHistoryEntry[];
   transactions: AccountTransaction[];
+  trades: Trade[];
+  assignedHoldings: AssignedHolding[];
 }
 
 export interface PortfolioView {
@@ -30,6 +37,9 @@ export interface PortfolioView {
   premiumHistory: PremiumHistoryEntry[];
   incomeHistory: PremiumHistoryEntry[];
   transactions: AccountTransaction[];
+  trades: Trade[];
+  assignedHoldings: EnrichedAssignedHolding[];
+  pnl: PnlSummary;
   score: ScoreBreakdown;
   alerts: GeneratedAlert[];
   totals: {
@@ -67,8 +77,11 @@ export interface PortfolioView {
 }
 
 export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): PortfolioView {
-  const { profile, accounts, balances, positions, premiumHistory, transactions } = input;
+  const { profile, accounts, balances, positions, premiumHistory, transactions, trades, assignedHoldings } =
+    input;
   const enriched = enrich(positions, now);
+  const holdings = enrichAssignedHoldings(assignedHoldings);
+  const pnl = buildPnl(trades, holdings, enriched, now);
 
   const cashAvailable = sum(balances, (b) => b.cash_balance);
   const cashAvailableForTrading = sum(balances, (b) => b.cash_available_for_trading);
@@ -100,6 +113,9 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     premiumHistory,
     incomeHistory,
     transactions,
+    trades,
+    assignedHoldings: holdings,
+    pnl,
     score,
     alerts,
     totals: {

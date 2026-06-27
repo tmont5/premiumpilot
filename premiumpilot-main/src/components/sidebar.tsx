@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   PiggyBank,
   Plug,
+  Receipt,
   Settings,
   Table2,
   Wallet,
@@ -18,6 +19,7 @@ const NAV = [
   { href: "/heatmap", label: "Heat Map", icon: Grid3x3 },
   { href: "/cash", label: "Cash", icon: Wallet },
   { href: "/income", label: "Income", icon: PiggyBank },
+  { href: "/trades", label: "Trades & P/L", icon: Receipt },
   { href: "/accounts", label: "Accounts", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

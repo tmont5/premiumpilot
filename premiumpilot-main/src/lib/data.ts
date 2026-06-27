@@ -1,10 +1,12 @@
 import { buildPortfolio, type PortfolioView } from "./portfolio";
 import {
   seedAccounts,
+  seedAssignedHoldings,
   seedBalances,
   seedPositions,
   seedPremiumHistory,
   seedProfile,
+  seedTrades,
 } from "./seed";
 import { createClient } from "./supabase/server";
 import type {
@@ -14,6 +16,8 @@ import type {
   Position,
   PremiumHistoryEntry,
   Profile,
+  Trade,
+  TradeOutcome,
 } from "./types";
 
 // True when no live Supabase project is wired up yet. In that case the app runs
@@ -35,6 +39,8 @@ export async function getPortfolio(): Promise<PortfolioView> {
     positions: seedPositions,
     premiumHistory: seedPremiumHistory,
     transactions: [],
+    trades: seedTrades,
+    assignedHoldings: seedAssignedHoldings,
   });
 }
 
@@ -106,14 +112,60 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
   if (balancesResult.error) throw balancesResult.error;
   if (positionsResult.error) throw positionsResult.error;
 
+  const transactions = ((transactionsResult.data ?? []) as Record<string, unknown>[]).map(
+    normalizeTransaction
+  );
+
   return buildPortfolio({
     profile: normalizeProfile(profileResult.data, user.id),
     accounts: (accountsResult.data ?? []) as ConnectedAccount[],
     balances: latestBalances(balancesResult.data ?? []),
     positions: (positionsResult.data ?? []).map(normalizePosition),
     premiumHistory: (premiumResult.data ?? []).map(normalizePremium),
-    transactions: ((transactionsResult.data ?? []) as Record<string, unknown>[]).map(normalizeTransaction),
+    transactions,
+    // Closed option trades derive from realized-gain transactions. Assigned-stock
+    // holdings need equity cost-basis data the sync doesn't pull yet (follow-up),
+    // so live mode shows none for now.
+    trades: deriveTrades(transactions),
+    assignedHoldings: [],
   });
+}
+
+// Builds trade history from realized option transactions. We know each close's
+// realized P/L but not its original premium/cost split, so those stay null.
+function deriveTrades(transactions: AccountTransaction[]): Trade[] {
+  return transactions
+    .filter((tx) => tx.asset_type === "OPTION" && tx.realized_gain_loss != null)
+    .map((tx) => ({
+      id: tx.id,
+      connected_account_id: tx.connected_account_id,
+      ticker: parseOptionUnderlying(tx.symbol) ?? tx.symbol ?? "OPTION",
+      strategy: isPutSymbol(tx.symbol) ? ("cash_secured_put" as const) : ("covered_call" as const),
+      strike: parseOptionStrike(tx.symbol),
+      contracts: Math.abs(tx.quantity ?? 0),
+      opened_at: null,
+      closed_at: tx.transaction_time,
+      premium_collected: null,
+      cost_to_close: null,
+      realized_pnl: tx.realized_gain_loss ?? 0,
+      outcome: "closed" as TradeOutcome,
+    }));
+}
+
+// OCC-style symbol, e.g. "AAPL  260116C00185000": last 8 digits are strike * 1000.
+function isPutSymbol(symbol: string | null): boolean {
+  return /\d{6}P\d{8}$/.test(symbol ?? "");
+}
+
+function parseOptionStrike(symbol: string | null): number {
+  const match = (symbol ?? "").match(/[CP](\d{8})$/);
+  return match ? Number(match[1]) / 1000 : 0;
+}
+
+function parseOptionUnderlying(symbol: string | null): string | null {
+  if (!symbol) return null;
+  const match = symbol.match(/^([A-Z.]+)\s+\d{6}[CP]\d{8}$/);
+  return match?.[1] ?? null;
 }
 
 function normalizeProfile(profile: Partial<Profile> | null, userId: string): Profile {

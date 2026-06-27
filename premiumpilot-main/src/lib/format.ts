@@ -4,6 +4,9 @@ const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD"
 export const fmtCurrency = (n: number) => usd.format(n);
 export const fmtCurrency0 = (n: number) => usd0.format(n);
 
+// Signed currency for P/L, e.g. +$1,250 / -$340. Whole dollars.
+export const fmtSignedCurrency0 = (n: number) => `${n >= 0 ? "+" : "-"}${usd0.format(Math.abs(n))}`;
+
 export const fmtPct = (n: number, digits = 1) => `${n.toFixed(digits)}%`;
 // For ratios stored as fractions (e.g. 0.42 -> 42.0%).
 export const fmtPctFromFraction = (n: number, digits = 1) => `${(n * 100).toFixed(digits)}%`;

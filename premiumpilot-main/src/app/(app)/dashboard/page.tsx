@@ -6,7 +6,7 @@ import { HeatmapChart } from "@/components/heatmap-chart";
 import { Disclaimer } from "@/components/disclaimer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getPortfolio } from "@/lib/data";
-import { fmtCurrency0, fmtPct } from "@/lib/format";
+import { fmtCurrency0, fmtPct, fmtSignedCurrency0 } from "@/lib/format";
 
 export default async function DashboardPage() {
   const pf = await getPortfolio();
@@ -27,6 +27,12 @@ export default async function DashboardPage() {
         <StatCard label="Open Positions" value={String(t.openPositions)} />
         <StatCard label="Monthly Premium" value={fmtCurrency0(t.monthlyPremium)} tone="success" />
         <StatCard label="Annualized Premium" value={fmtCurrency0(t.annualizedPremium)} tone="success" />
+        <StatCard
+          label="Total P/L"
+          value={fmtSignedCurrency0(pf.pnl.total)}
+          tone={pf.pnl.total >= 0 ? "success" : "danger"}
+          hint="Realized + unrealized"
+        />
         <StatCard
           label="Expected Assignment Exposure"
           value={fmtCurrency0(t.expectedAssignmentExposure)}
