@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Compass, LogOut } from "lucide-react";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
+import { RefreshButton } from "@/components/refresh-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { isDemoMode } from "@/lib/data";
@@ -39,6 +40,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </Link>
           <div className="ml-auto flex items-center gap-3">
             {demo && <Badge variant="warning">Demo data</Badge>}
+            <RefreshButton />
             {user?.email && <span className="text-sm text-muted-foreground">{user.email}</span>}
             {!demo && (
               <form action="/auth/logout" method="post">

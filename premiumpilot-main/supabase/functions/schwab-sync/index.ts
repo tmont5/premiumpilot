@@ -22,11 +22,23 @@ import { alertsForPositions, resolveStatus } from "../_shared/engine.ts";
 
 const REFRESH_SKEW_MS = 5 * 60 * 1000; // refresh if expiring within 5 min
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
   const db = adminClient();
-  const { data: accounts, error } = await db
+
+  // The cron invokes this with an empty body to sync every account. A user-
+  // triggered refresh (via the app's /api/sync route) passes { userId } to sync
+  // just that user's accounts.
+  let userId: string | null = null;
+  if (req.method === "POST") {
+    const body = await req.json().catch(() => null);
+    if (body && typeof body.userId === "string") userId = body.userId;
+  }
+
+  let accountsQuery = db
     .from("connected_accounts")
     .select("id, user_id, schwab_account_id, schwab_account_hash, encrypted_access_token, encrypted_refresh_token, token_expires_at, needs_reauth");
+  if (userId) accountsQuery = accountsQuery.eq("user_id", userId);
+  const { data: accounts, error } = await accountsQuery;
   if (error) return json({ error: error.message }, 500);
 
   const results: Record<string, string> = {};
