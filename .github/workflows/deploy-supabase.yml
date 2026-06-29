@@ -1,0 +1,52 @@
+name: Deploy Supabase
+
+# Edge Functions and migrations are NOT deployed by Vercel. This workflow pushes
+# them to the Supabase project whenever supabase/** changes on main (or on a
+# manual run), so merged sync/function/schema changes actually take effect.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   SUPABASE_ACCESS_TOKEN  – personal access token (supabase.com/dashboard/account/tokens)
+#   SUPABASE_PROJECT_REF   – the premiumpilot project ref (Project Settings → General)
+#   SUPABASE_DB_PASSWORD   – database password (needed for `db push`)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "premiumpilot-main/supabase/**"
+  workflow_dispatch:
+
+# The Supabase project lives under premiumpilot-main/ (config.toml + functions).
+defaults:
+  run:
+    working-directory: premiumpilot-main
+
+jobs:
+  functions:
+    name: Deploy Edge Functions
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      # Deploys every function in supabase/functions. verify_jwt settings are
+      # read from supabase/config.toml (cron-invoked functions stay public).
+      - run: supabase functions deploy --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+
+  migrations:
+    name: Push migrations
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_REF }}"
+      # Applies any migrations not yet recorded in the remote migration history.
+      - run: supabase db push
