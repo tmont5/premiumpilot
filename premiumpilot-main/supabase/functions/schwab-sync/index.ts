@@ -10,13 +10,17 @@ import { adminClient } from "../_shared/db.ts";
 import { decryptToken, encryptToken } from "../_shared/crypto.ts";
 import {
   accountHashByNumber,
+  buildDeltaMap,
+  buildPriceMap,
   getAccountNumbers,
   getAccounts,
+  getQuotes,
   getTransactions,
   mapEquityPositions,
   mapPositions,
   mapTransactions,
   refreshTokens,
+  symbolsForQuotes,
 } from "../_shared/schwab.ts";
 import { alertsForPositions, resolveStatus } from "../_shared/engine.ts";
 
@@ -88,8 +92,15 @@ Deno.serve(async (req) => {
         buying_power: bal.buyingPower ?? bal.cashAvailableForTrading ?? 0,
       });
 
-      // Positions: map, compute status, replace set.
-      const mapped = mapPositions(account, {}); // underlying prices resolved upstream in production
+      // Market Data quotes: underlying/equity prices and option greeks (delta).
+      // Non-fatal — if quotes fail, positions still sync (prices/delta fall back).
+      const symbols = symbolsForQuotes(account);
+      const quotes = await getQuotes(accessToken, [...symbols.equity, ...symbols.option]);
+      const prices = buildPriceMap(quotes);
+      const deltas = buildDeltaMap(quotes);
+
+      // Positions: map (with live prices + greeks), compute status, replace set.
+      const mapped = mapPositions(account, prices, deltas);
       await db.from("positions").delete().eq("connected_account_id", acct.id);
       if (mapped.length) {
         await db.from("positions").insert(
@@ -101,13 +112,20 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Equity/ETF lots backing the income strategy (Assigned Holdings). Replace set.
-      const equity = mapEquityPositions(account);
-      await db.from("equity_holdings").delete().eq("connected_account_id", acct.id);
-      if (equity.length) {
-        await db.from("equity_holdings").insert(
-          equity.map((e) => ({ connected_account_id: acct.id, ...e }))
-        );
+      // Equity/ETF lots backing the income strategy (Assigned Holdings). Replace
+      // set. Non-fatal: the equity_holdings table may not be provisioned yet, and
+      // a missing/optional table must not fail the sync or flag re-auth.
+      try {
+        const equity = mapEquityPositions(account, prices);
+        await db.from("equity_holdings").delete().eq("connected_account_id", acct.id);
+        if (equity.length) {
+          const { error: equityError } = await db
+            .from("equity_holdings")
+            .insert(equity.map((e) => ({ connected_account_id: acct.id, ...e })));
+          if (equityError) throw equityError;
+        }
+      } catch (e) {
+        console.error("equity_holdings sync skipped", acct.id, e);
       }
 
       // Re-evaluate risk alerts each sync.

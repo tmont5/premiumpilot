@@ -10,6 +10,7 @@
 
 const AUTH_BASE = "https://api.schwabapi.com/v1/oauth";
 const TRADER_BASE = "https://api.schwabapi.com/trader/v1";
+const MARKETDATA_BASE = "https://api.schwabapi.com/marketdata/v1";
 
 function clientCreds() {
   const id = Deno.env.get("SCHWAB_CLIENT_ID");
@@ -117,6 +118,76 @@ export function getTransactions(
   return authedGet(`/accounts/${accountHash}/transactions?${params.toString()}`, accessToken);
 }
 
+async function authedGetMarket(path: string, accessToken: string) {
+  const res = await fetch(`${MARKETDATA_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+  });
+  if (!res.ok) throw new Error(`Schwab market GET ${path} failed: ${res.status}`);
+  return res.json();
+}
+
+// Market Data API quotes (PRD §5). Returns an object keyed by symbol. Equity
+// quotes carry a price; option quotes additionally carry greeks (delta) and the
+// underlying price. Symbols are batched to stay within request limits.
+export async function getQuotes(accessToken: string, symbols: string[]): Promise<Record<string, any>> {
+  const out: Record<string, any> = {};
+  const unique = [...new Set(symbols.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 100) {
+    const chunk = unique.slice(i, i + 100);
+    const params = new URLSearchParams({ symbols: chunk.join(","), fields: "quote" });
+    try {
+      const data = await authedGetMarket(`/quotes?${params.toString()}`, accessToken);
+      if (data && typeof data === "object") Object.assign(out, data);
+    } catch (e) {
+      console.error("Schwab quotes fetch failed", e);
+    }
+  }
+  return out;
+}
+
+// The symbols we need quotes for: option contracts (for greeks/delta) and the
+// underlying + equity tickers (for prices).
+// deno-lint-ignore no-explicit-any
+export function symbolsForQuotes(account: any): { equity: string[]; option: string[] } {
+  // deno-lint-ignore no-explicit-any
+  const positions: any[] = account?.securitiesAccount?.positions ?? [];
+  const equity = new Set<string>();
+  const option = new Set<string>();
+  for (const pos of positions) {
+    const inst = pos.instrument ?? {};
+    if (inst.assetType === "OPTION") {
+      if (inst.symbol) option.add(inst.symbol);
+      const u = inst.underlyingSymbol ?? parseUnderlyingFromOptionSymbol(inst.symbol);
+      if (u) equity.add(u);
+    } else if (inst.assetType === "EQUITY" || inst.assetType === "COLLECTIVE_INVESTMENT") {
+      if (inst.symbol) equity.add(inst.symbol);
+    }
+  }
+  return { equity: [...equity], option: [...option] };
+}
+
+// symbol -> best available price (mark, then last, then prior close).
+export function buildPriceMap(quotes: Record<string, any>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [symbol, entry] of Object.entries(quotes)) {
+    const q = (entry as any)?.quote ?? {};
+    const price = number(q.mark) || number(q.lastPrice) || number(q.closePrice);
+    if (price) out[symbol] = price;
+  }
+  return out;
+}
+
+// option symbol -> delta (greeks are returned on option quotes).
+export function buildDeltaMap(quotes: Record<string, any>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [symbol, entry] of Object.entries(quotes)) {
+    if ((entry as any)?.assetMainType !== "OPTION") continue;
+    const d = (entry as any)?.quote?.delta;
+    if (typeof d === "number" && Number.isFinite(d)) out[symbol] = d;
+  }
+  return out;
+}
+
 export function accountHashByNumber(accountNumbers: any[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const row of accountNumbers ?? []) {
@@ -144,7 +215,11 @@ export interface MappedPosition {
 }
 
 // deno-lint-ignore no-explicit-any
-export function mapPositions(account: any, underlyingPrices: Record<string, number>): MappedPosition[] {
+export function mapPositions(
+  account: any,
+  underlyingPrices: Record<string, number>,
+  optionDeltas: Record<string, number> = {}
+): MappedPosition[] {
   // deno-lint-ignore no-explicit-any
   const positions: any[] = account?.securitiesAccount?.positions ?? [];
   const out: MappedPosition[] = [];
@@ -160,6 +235,9 @@ export function mapPositions(account: any, underlyingPrices: Record<string, numb
     const underlying = underlyingPrices[ticker] ?? 0;
     const premium = Math.abs(Number(pos.averagePrice ?? 0)) * contracts * 100;
     const marketVal = Math.abs(Number(pos.marketValue ?? 0));
+    // Greeks come from the Market Data quote; fall back to anything on the
+    // position payload (usually absent), then 0.
+    const delta = optionDeltas[inst.symbol] ?? Number(inst.optionDeltas?.delta ?? pos.delta ?? 0);
     out.push({
       ticker,
       strategy: isPut ? "cash_secured_put" : "covered_call",
@@ -169,7 +247,7 @@ export function mapPositions(account: any, underlyingPrices: Record<string, numb
       premium_collected: premium,
       current_option_value: marketVal,
       current_underlying_price: underlying,
-      delta: Number(inst.optionDeltas?.delta ?? pos.delta ?? 0),
+      delta,
       capital_requirement: isPut ? strike * 100 * contracts : underlying * 100 * contracts,
     });
   }
@@ -188,7 +266,7 @@ export interface MappedEquity {
 }
 
 // deno-lint-ignore no-explicit-any
-export function mapEquityPositions(account: any): MappedEquity[] {
+export function mapEquityPositions(account: any, prices: Record<string, number> = {}): MappedEquity[] {
   // deno-lint-ignore no-explicit-any
   const positions: any[] = account?.securitiesAccount?.positions ?? [];
   const out: MappedEquity[] = [];
@@ -200,11 +278,13 @@ export function mapEquityPositions(account: any): MappedEquity[] {
     if (!ticker || shares <= 0) continue;
     const costBasis = Math.abs(Number(pos.averagePrice ?? 0));
     const marketValue = Math.abs(Number(pos.marketValue ?? 0));
+    // Prefer the live quote; fall back to the position's market value, then basis.
+    const current = prices[ticker] || (marketValue > 0 ? marketValue / shares : costBasis);
     out.push({
       ticker,
       shares,
       cost_basis_per_share: costBasis,
-      current_price: marketValue > 0 ? marketValue / shares : costBasis,
+      current_price: current,
     });
   }
   return out;
