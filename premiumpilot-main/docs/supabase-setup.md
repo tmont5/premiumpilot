@@ -163,6 +163,26 @@ pnpm dev
 
 Without `NEXT_PUBLIC_SUPABASE_URL`, the app stays in demo mode.
 
+## CI deploy (Edge Functions + migrations)
+
+Vercel deploys the Next.js app but **not** Supabase Edge Functions or migrations.
+The `Deploy Supabase` GitHub Action (`.github/workflows/deploy-supabase.yml`)
+does that: on any push to `main` that touches `supabase/**` (or a manual run via
+the Actions tab), it deploys the functions and runs `supabase db push`.
+
+Add these repository secrets first (Settings → Secrets and variables → Actions):
+
+| Secret | Where to find it |
+|---|---|
+| `SUPABASE_ACCESS_TOKEN` | supabase.com/dashboard/account/tokens |
+| `SUPABASE_PROJECT_REF` | Project Settings → General → Reference ID |
+| `SUPABASE_DB_PASSWORD` | the database password (Project Settings → Database) |
+
+First-run caveat: if earlier migrations were applied by hand, `db push` may try to
+re-apply them. Mark them as already applied once with
+`supabase migration repair --status applied <version>` (e.g. `0001`…`0007`), then
+re-run so only new migrations (like `0008_equity_holdings`) apply.
+
 ## Security Notes
 
 - Store Schwab access and refresh tokens only through Edge Functions.
