@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,21 +41,22 @@ export async function DELETE(
     return NextResponse.json({ error: "Account not found" }, { status: 404 });
   }
 
-  const cleanupSteps = [
-    supabase.from("account_transactions").delete().eq("connected_account_id", id).eq("user_id", user.id),
-    supabase.from("account_balances").delete().eq("connected_account_id", id),
-    supabase.from("positions").delete().eq("connected_account_id", id),
-    supabase.from("premium_history").update({ connected_account_id: null }).eq("connected_account_id", id).eq("user_id", user.id),
-  ];
-
-  for (const step of cleanupSteps) {
-    const { error } = await step;
-    if (error) {
-      return NextResponse.json({ error: "Could not remove account data" }, { status: 500 });
-    }
+  const admin = createAdminClient();
+  if (!admin) {
+    return NextResponse.json({ error: "Supabase admin client is not configured" }, { status: 503 });
   }
 
-  const { error } = await supabase
+  const { error: premiumError } = await admin
+    .from("premium_history")
+    .update({ connected_account_id: null })
+    .eq("connected_account_id", id)
+    .eq("user_id", user.id);
+
+  if (premiumError) {
+    return NextResponse.json({ error: "Could not remove account data" }, { status: 500 });
+  }
+
+  const { error } = await admin
     .from("connected_accounts")
     .delete()
     .eq("id", id)
@@ -65,4 +67,14 @@ export async function DELETE(
   }
 
   return NextResponse.json({ ok: true });
+}
+
+function createAdminClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) return null;
+
+  return createSupabaseClient(url, serviceRoleKey, {
+    auth: { persistSession: false },
+  });
 }
