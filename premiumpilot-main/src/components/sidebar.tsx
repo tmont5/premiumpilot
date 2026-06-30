@@ -8,6 +8,7 @@ import {
   Plug,
   Receipt,
   Settings,
+  Sparkles,
   Table2,
   Wallet,
 } from "lucide-react";
@@ -20,6 +21,7 @@ const NAV = [
   { href: "/cash", label: "Cash", icon: Wallet },
   { href: "/income", label: "Income", icon: PiggyBank },
   { href: "/trades", label: "Trades & P/L", icon: Receipt },
+  { href: "/advisor", label: "Advisor", icon: Sparkles },
   { href: "/accounts", label: "Accounts", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
