@@ -31,6 +31,14 @@ interface Point {
 }
 
 export function HeatmapChart({ positions }: { positions: EnrichedPosition[] }) {
+  if (positions.length === 0) {
+    return (
+      <div className="flex h-[360px] items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        No open option positions to plot. Once positions sync, they appear here by DTE and profit capture.
+      </div>
+    );
+  }
+
   const data: Point[] = positions.map((p) => ({
     x: p.metrics.dte,
     y: Math.round(p.metrics.profitCapturePct),
