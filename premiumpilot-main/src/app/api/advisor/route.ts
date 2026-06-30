@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { getPortfolio, isDemoMode } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -10,6 +10,10 @@ import {
 } from "@/lib/advisor";
 
 export const maxDuration = 60;
+
+// Override with OPENAI_MODEL if you want a different model (any current
+// structured-output-capable chat model works).
+const MODEL = process.env.OPENAI_MODEL ?? "gpt-4o";
 
 export async function POST() {
   // In live mode require an authenticated user (the AI call costs money);
@@ -22,9 +26,9 @@ export async function POST() {
     if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
-      { error: "The advisor isn't configured yet. Add an ANTHROPIC_API_KEY to enable it." },
+      { error: "The advisor isn't configured yet. Add an OPENAI_API_KEY to enable it." },
       { status: 503 }
     );
   }
@@ -32,16 +36,12 @@ export async function POST() {
   const pf = await getPortfolio();
   const snapshot = buildAdvisorSnapshot(pf);
 
-  const client = new Anthropic();
+  const client = new OpenAI();
   try {
-    const message = await client.messages.create({
-      model: "claude-opus-4-8",
-      max_tokens: 8000,
-      thinking: { type: "adaptive" },
-      system: [{ type: "text", text: ADVISOR_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-      // Constrain the response to the considerations schema so it's always parseable.
-      output_config: { format: { type: "json_schema", schema: ADVISOR_OUTPUT_SCHEMA } },
+    const completion = await client.chat.completions.create({
+      model: MODEL,
       messages: [
+        { role: "system", content: ADVISOR_SYSTEM_PROMPT },
         {
           role: "user",
           content: `Analyze this portfolio snapshot and return your considerations.\n\n${JSON.stringify(
@@ -49,18 +49,22 @@ export async function POST() {
           )}`,
         },
       ],
-    } as Anthropic.MessageCreateParamsNonStreaming);
+      // Constrain the response to the considerations schema so it's always parseable.
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "advisor_analysis", strict: true, schema: ADVISOR_OUTPUT_SCHEMA },
+      },
+    });
 
-    if (message.stop_reason === "refusal") {
+    const choice = completion.choices[0]?.message;
+    if (choice?.refusal) {
       return NextResponse.json({ error: "The advisor couldn't complete this analysis." }, { status: 422 });
     }
-
-    const text = message.content.find((b) => b.type === "text");
-    if (!text || text.type !== "text") {
+    if (!choice?.content) {
       return NextResponse.json({ error: "The advisor returned no analysis." }, { status: 502 });
     }
 
-    const result = JSON.parse(text.text) as AdvisorResult;
+    const result = JSON.parse(choice.content) as AdvisorResult;
     return NextResponse.json({ ok: true, demo: isDemoMode(), result });
   } catch (e) {
     console.error("[api/advisor] failed", e);
