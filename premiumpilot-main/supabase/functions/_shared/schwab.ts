@@ -226,10 +226,12 @@ export function mapPositions(
   for (const pos of positions) {
     const inst = pos.instrument ?? {};
     if (inst.assetType !== "OPTION") continue;
-    const isPut = inst.putCall === "PUT";
+    // Account-position option instruments don't reliably carry putCall/strikePrice
+    // (those live in the OCC symbol), so derive them from the symbol as a fallback.
+    const isPut = (inst.putCall ?? putCallFromSymbol(inst.symbol)) === "PUT";
     const ticker: string = inst.underlyingSymbol ?? parseUnderlyingFromOptionSymbol(inst.symbol) ?? inst.symbol;
-    const strike = Number(inst.strikePrice ?? 0);
-    const contracts = Math.abs(Number(pos.shortQuantity ?? pos.longQuantity ?? 0));
+    const strike = Number(inst.strikePrice ?? 0) || strikeFromSymbol(inst.symbol);
+    const contracts = Math.abs(Number(pos.shortQuantity ?? pos.longQuantity ?? pos.quantity ?? 0));
     const expiration = optionExpiration(inst);
     if (!ticker || !strike || !contracts || !expiration) continue;
     const underlying = underlyingPrices[ticker] ?? 0;
@@ -367,6 +369,16 @@ function parseUnderlyingFromOptionSymbol(symbol: unknown): string | null {
   if (typeof symbol !== "string") return null;
   const match = symbol.match(/^([A-Z.]+)\s+\d{6}[CP]\d{8}$/);
   return match?.[1] ?? null;
+}
+
+// OCC symbol, e.g. "AAPL  240920C00185000": the trailing 8 digits are strike * 1000.
+function strikeFromSymbol(symbol: unknown): number {
+  const match = String(symbol ?? "").match(/[CP](\d{8})$/);
+  return match ? Number(match[1]) / 1000 : 0;
+}
+
+function putCallFromSymbol(symbol: unknown): "PUT" | "CALL" {
+  return /\d{6}P\d{8}$/.test(String(symbol ?? "")) ? "PUT" : "CALL";
 }
 
 function transactionId(tx: any): string {
