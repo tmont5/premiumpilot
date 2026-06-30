@@ -82,7 +82,7 @@ export function PositionsTable({ positions }: { positions: EnrichedPosition[] })
               <TableCell
                 className={cn(
                   "text-right font-medium tabular-nums",
-                  m.profitCapturePct >= 75 ? "text-success" : m.profitCapturePct < 0 ? "text-danger" : ""
+                  m.profitCapturePct > 0 ? "text-success" : m.profitCapturePct < 0 ? "text-danger" : ""
                 )}
               >
                 {fmtPct(m.profitCapturePct, 0)}
