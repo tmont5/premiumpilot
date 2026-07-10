@@ -12,6 +12,7 @@ import {
   accountHashByNumber,
   buildDeltaMap,
   buildPriceMap,
+  describeOptionPositions,
   getAccountNumbers,
   getAccounts,
   getQuotes,
@@ -156,6 +157,7 @@ Deno.serve(async (req) => {
         quotes: Object.keys(quotes).length,
         deltas: Object.keys(deltas).length,
         posError,
+        optionsSeen: describeOptionPositions(account),
       };
     } catch (e) {
       console.error("sync failed", acct.id, e);

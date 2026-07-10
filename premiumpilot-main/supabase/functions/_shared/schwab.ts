@@ -256,6 +256,41 @@ export function mapPositions(
   return out;
 }
 
+// Diagnostic: for every OPTION position in the account, report the fields
+// mapPositions filters on and whether (and why) the position would be dropped.
+// Uses the same parsing helpers as mapPositions so it mirrors the real filter.
+// deno-lint-ignore no-explicit-any
+export function describeOptionPositions(account: any) {
+  // deno-lint-ignore no-explicit-any
+  const positions: any[] = account?.securitiesAccount?.positions ?? [];
+  return positions
+    .filter((pos) => pos.instrument?.assetType === "OPTION")
+    .map((pos) => {
+      const inst = pos.instrument ?? {};
+      const ticker = inst.underlyingSymbol ?? parseUnderlyingFromOptionSymbol(inst.symbol) ?? inst.symbol ?? null;
+      const strike = Number(inst.strikePrice ?? 0) || strikeFromSymbol(inst.symbol);
+      const contracts = Math.abs(Number(pos.shortQuantity ?? pos.longQuantity ?? pos.quantity ?? 0));
+      const expiration = optionExpiration(inst);
+      const reason = [
+        !ticker && "ticker",
+        !strike && "strike",
+        !contracts && "contracts",
+        !expiration && "expiration",
+      ]
+        .filter(Boolean)
+        .join(",");
+      return {
+        symbol: inst.symbol ?? null,
+        ticker,
+        strike,
+        contracts,
+        expiration,
+        dropped: reason.length > 0,
+        reason: reason || null,
+      };
+    });
+}
+
 // Map a Schwab account's long equity/ETF lots. We can't distinguish shares that
 // arrived via put assignment from shares simply bought, so every long stock lot
 // is treated as a holding backing the income strategy. Current price is derived
