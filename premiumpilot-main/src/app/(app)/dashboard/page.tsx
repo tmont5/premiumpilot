@@ -3,6 +3,7 @@ import { StatCard } from "@/components/stat-card";
 import { ScoreGauge, ScoreBreakdownBars } from "@/components/score-gauge";
 import { AlertsPanel } from "@/components/alerts-panel";
 import { HeatmapChart } from "@/components/heatmap-chart";
+import { ReauthBanner } from "@/components/reauth-banner";
 import { Disclaimer } from "@/components/disclaimer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getPortfolio } from "@/lib/data";
@@ -18,6 +19,8 @@ export default async function DashboardPage() {
         title="Portfolio Summary"
         description="Decisions, not positions — your income book at a glance."
       />
+
+      <ReauthBanner accounts={pf.accounts} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Net Liquidation Value" value={fmtCurrency0(t.netLiquidationValue)} />

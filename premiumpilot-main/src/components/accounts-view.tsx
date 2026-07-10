@@ -120,14 +120,27 @@ export function AccountsView({
                   <p className="text-xs text-muted-foreground">
                     Last sync {fmtRelativeTime(a.last_synced_at)}
                   </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={removingId === a.id}
-                    onClick={() => setPendingRemoval(a)}
-                  >
-                    {removingId === a.id ? "Removing..." : "Remove"}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {a.needs_reauth && (
+                      <Button
+                        size="sm"
+                        disabled={!connectUrl}
+                        onClick={() => {
+                          if (connectUrl) window.location.href = connectUrl;
+                        }}
+                      >
+                        Reconnect
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={removingId === a.id}
+                      onClick={() => setPendingRemoval(a)}
+                    >
+                      {removingId === a.id ? "Removing..." : "Remove"}
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
