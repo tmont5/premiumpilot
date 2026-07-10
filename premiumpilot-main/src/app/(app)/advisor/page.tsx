@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/page-header";
 import { AdvisorView } from "@/components/advisor-view";
+import { AdvisorChat } from "@/components/advisor-chat";
 import { Disclaimer } from "@/components/disclaimer";
 
 export default function AdvisorPage() {
@@ -10,6 +11,7 @@ export default function AdvisorPage() {
         description="AI-assisted analysis of your portfolio — considerations and tradeoffs, not directives."
       />
       <AdvisorView />
+      <AdvisorChat />
       <Disclaimer className="mt-4 text-xs leading-relaxed text-muted-foreground" />
     </>
   );
