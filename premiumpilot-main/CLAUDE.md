@@ -60,9 +60,11 @@ Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4 · shadcn-style
 Positions (Short Put label, totals row, Prob. Assigned, Stock Price column, $0 covered-call capital, positive profit-capture in green) · Assigned Holdings section on Positions & Trades pages · Trades & P/L page (history, breakeven, cumulative P/L; live income/trades derived from transactions) · header Refresh button (per-user sync) · Market-data quotes (prices + greeks) · Advisor page (OpenAI): one-shot analysis + chat · Re-auth Reconnect button + Dashboard banner · CI Supabase-deploy Action.
 
 ## ⏳ Requested but NOT yet built (next up)
-1. **Dashboard: net capital invested** — the amount the user initially put in for investing, net of all **deposits and withdrawals** (net cash contributed). Source: Schwab `account_transactions` cash-movement types. The sync currently fetches only `TRADE` + `RECEIVE_AND_DELIVER`; deposits/withdrawals are other types (e.g. `ACH_RECEIPT`, `CASH_RECEIPT`, `ELECTRONIC_FUND`, `WIRE_*`), so the sync must also pull those, store/sum net cash flow, and surface a Dashboard stat.
-2. **Total put-assignment exposure** — the dollar amount of stock you'd have to take possession of if **all open short puts were assigned** = Σ(strike × 100 × contracts) over `cash_secured_put` positions. (This already equals the sum of short-put `capital_requirement`, and — since covered calls are now $0 — roughly the current Positions "Total" capital. The ask is to surface it explicitly, likely as a **Dashboard stat**.) Add it.
-3. **Remove the temporary `describeOptionPositions` / `optionsSeen` diagnostic** from `schwab-sync` once the position-sync issue is confirmed resolved.
+1. **Remove the temporary `describeOptionPositions` / `optionsSeen` diagnostic** from `schwab-sync` once the position-sync issue is confirmed resolved.
+
+## ✅ Recently shipped (Dashboard stats)
+- **Net Capital Invested** — net external cash contributed (deposits − withdrawals). The sync now also pulls Schwab cash-movement types (`CASH_FLOW_TYPES` in `schwab-sync/index.ts`: `ACH_RECEIPT`/`ACH_DISBURSEMENT`/`CASH_RECEIPT`/`CASH_DISBURSEMENT`/`ELECTRONIC_FUND`/`WIRE_IN`/`WIRE_OUT`) from **2025-01-01** (`CASH_FLOW_START`) forward, on top of the existing 400-day `TRADE`+`RECEIVE_AND_DELIVER` window. The app sums `net_amount` over those rows in `buildPortfolio()` (`CASH_FLOW_TYPES` in `src/lib/portfolio.ts` — **keep the two lists in sync**). No new column: rows already land in `account_transactions`. Demo shows $52,000 from `seedTransactions`.
+- **Put Assignment Exposure** — Σ(strike × 100 × contracts) over `cash_secured_put` positions (`totals.putAssignmentExposure`). Demo shows $123,600.
 
 ## Outstanding ops items (user-side)
 - Reconnect Schwab (token expired — `needs_reauth`) so live data syncs again.

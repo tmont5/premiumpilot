@@ -1,5 +1,6 @@
 import type {
   AccountBalance,
+  AccountTransaction,
   AssignedHolding,
   ConnectedAccount,
   PremiumHistoryEntry,
@@ -144,6 +145,45 @@ function buildPremiumHistory(): PremiumHistoryEntry[] {
     }
   }
   return entries;
+}
+
+// Cash-movement transactions (deposits/withdrawals) backing the Dashboard "Net
+// Capital Invested" stat. Deposits are positive net_amount, withdrawals negative,
+// so the net contributed here is 40,000 + 10,000 + 5,000 - 3,000 = $52,000. The
+// trailing TRADE row is intentionally NOT a cash-movement type and must be
+// excluded from the net-capital sum (it exercises the type filter).
+export const seedTransactions: AccountTransaction[] = [
+  mkTx("tx-d1", "ACH_RECEIPT", "Initial ACH deposit", 40000, "2026-01-05"),
+  mkTx("tx-d2", "ACH_RECEIPT", "ACH deposit", 10000, "2026-02-20"),
+  mkTx("tx-d3", "WIRE_IN", "Incoming wire", 5000, "2026-04-15"),
+  mkTx("tx-w1", "ACH_DISBURSEMENT", "ACH withdrawal", -3000, "2026-05-30"),
+  mkTx("tx-t1", "TRADE", "Sold to open — not a cash movement", 850, "2026-06-05"),
+];
+
+function mkTx(
+  id: string,
+  type: string,
+  description: string,
+  net_amount: number,
+  date: string
+): AccountTransaction {
+  return {
+    id,
+    user_id: DEMO_USER_ID,
+    connected_account_id: "acct-individual",
+    schwab_activity_id: id,
+    type,
+    status: "VALID",
+    description,
+    symbol: null,
+    asset_type: null,
+    transaction_time: date + "T14:30:00Z",
+    net_amount,
+    realized_gain_loss: null,
+    fees: null,
+    price: null,
+    quantity: null,
+  };
 }
 
 // ── Trade history & P/L demo data (PRD §9.6) ────────────────────────────────

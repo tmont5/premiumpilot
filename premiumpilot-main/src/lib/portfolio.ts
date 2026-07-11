@@ -19,6 +19,21 @@ import { enrichAssignedHoldings, buildPnl } from "./pnl";
 import { realizedIncomeFromTrades } from "./trades";
 import { ENGINE_CONFIG } from "./config";
 
+// Schwab activity types that represent external cash entering or leaving the
+// account (deposits/withdrawals). Deposits carry a positive net_amount, with-
+// drawals a negative one, so summing net_amount over these rows yields net cash
+// contributed. Keep this list in sync with CASH_FLOW_TYPES in
+// supabase/functions/schwab-sync/index.ts (which decides what the sync pulls).
+export const CASH_FLOW_TYPES = new Set<string>([
+  "ACH_RECEIPT",
+  "ACH_DISBURSEMENT",
+  "CASH_RECEIPT",
+  "CASH_DISBURSEMENT",
+  "ELECTRONIC_FUND",
+  "WIRE_IN",
+  "WIRE_OUT",
+]);
+
 export interface PortfolioInput {
   profile: Profile;
   accounts: ConnectedAccount[];
@@ -55,6 +70,8 @@ export interface PortfolioView {
     monthlyPremium: number;
     annualizedPremium: number;
     expectedAssignmentExposure: number;
+    putAssignmentExposure: number;
+    netCapitalInvested: number;
   };
   cash: {
     currentCash: number;
@@ -99,6 +116,23 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     0
   );
 
+  // Total put-assignment exposure: the full dollar amount of stock we'd have to
+  // buy if every open short put were assigned = Σ(strike × 100 × contracts) over
+  // cash-secured puts. Computed straight from strike/contracts (not
+  // capital_requirement) so it's exact even if that field is ever derived
+  // differently.
+  const putAssignmentExposure = positions
+    .filter((p) => p.strategy === "cash_secured_put")
+    .reduce((s, p) => s + p.strike * 100 * p.contracts, 0);
+
+  // Net capital invested: net external cash the user has contributed (deposits
+  // less withdrawals) since tracking began. Summed from the synced cash-movement
+  // transactions; 0 when none are present (e.g. demo has seed deposits, a fresh
+  // live account has none yet).
+  const netCapitalInvested = transactions
+    .filter((tx) => tx.type != null && CASH_FLOW_TYPES.has(tx.type))
+    .reduce((s, tx) => s + tx.net_amount, 0);
+
   const incomeHistory = realizedIncomeEntries(premiumHistory, trades);
   const income = buildIncome(incomeHistory, profile.income_goal_annual, now);
   const score = computeScore({ positions: enriched, cashAvailable });
@@ -131,6 +165,8 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
       monthlyPremium: income.thisMonth,
       annualizedPremium: income.rolling12,
       expectedAssignmentExposure,
+      putAssignmentExposure,
+      netCapitalInvested,
     },
     cash: {
       currentCash: cashAvailable,
