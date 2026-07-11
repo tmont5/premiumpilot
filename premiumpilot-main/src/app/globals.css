@@ -27,7 +27,9 @@
   /* status / chart colors */
   --success: oklch(0.72 0.19 149);
   --warning: oklch(0.79 0.17 80);
+  --caution: oklch(0.7 0.19 45);
   --danger: oklch(0.62 0.24 27);
+  --leverage: oklch(0.55 0.22 300);
   --chart-1: oklch(0.72 0.19 149);
   --chart-2: oklch(0.79 0.17 80);
   --chart-3: oklch(0.62 0.24 27);
@@ -57,7 +59,9 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.72 0.19 149);
   --warning: oklch(0.79 0.17 80);
+  --caution: oklch(0.74 0.19 45);
   --danger: oklch(0.66 0.24 27);
+  --leverage: oklch(0.62 0.22 300);
   --chart-1: oklch(0.72 0.19 149);
   --chart-2: oklch(0.79 0.17 80);
   --chart-3: oklch(0.66 0.24 27);
@@ -91,7 +95,9 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-caution: var(--caution);
   --color-danger: var(--danger);
+  --color-leverage: var(--leverage);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);

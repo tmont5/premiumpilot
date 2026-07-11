@@ -8,6 +8,7 @@ import {
   Plug,
   Receipt,
   Settings,
+  ShieldAlert,
   Sparkles,
   Table2,
   Wallet,
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/risk", label: "Risk Manager", icon: ShieldAlert },
   { href: "/positions", label: "Positions", icon: Table2 },
   { href: "/heatmap", label: "Heat Map", icon: Grid3x3 },
   { href: "/cash", label: "Cash", icon: Wallet },

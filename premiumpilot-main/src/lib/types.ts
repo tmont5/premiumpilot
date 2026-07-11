@@ -14,6 +14,11 @@ export type PositionStatus =
 
 export type AlertType = "close" | "roll" | "assignment_risk" | "cash_deployment";
 
+// PRD §4.1 (risk engine): the user's target-band profile and account tax/margin
+// class. Drives the Risk page's allocation bands and margin-leverage warnings.
+export type RiskProfile = "conservative" | "balanced" | "aggressive";
+export type RiskAccountType = "cash" | "margin" | "ira";
+
 export interface Profile {
   id: string; // == auth user id
   income_goal_annual: number | null;
@@ -22,6 +27,8 @@ export interface Profile {
   notify_web_push: boolean;
   discord_webhook_url: string | null;
   timezone: string;
+  risk_profile: RiskProfile;
+  account_type: RiskAccountType;
 }
 
 export interface ConnectedAccount {
