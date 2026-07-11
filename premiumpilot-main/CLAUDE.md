@@ -57,7 +57,14 @@ Next.js 16 (App Router) · React 19 · TypeScript · Tailwind v4 · shadcn-style
 - `positions.delta` is `numeric(6,4)`; option deltas are in [-1,1] so they fit.
 
 ## What's built so far
-Positions (Short Put label, totals row, Prob. Assigned, Stock Price column, $0 covered-call capital, positive profit-capture in green) · Assigned Holdings section on Positions & Trades pages · Trades & P/L page (history, breakeven, cumulative P/L; live income/trades derived from transactions) · header Refresh button (per-user sync) · Market-data quotes (prices + greeks) · Advisor page (OpenAI): one-shot analysis + chat · Re-auth Reconnect button + Dashboard banner · CI Supabase-deploy Action.
+Positions (Short Put label, totals row, Prob. Assigned, Stock Price column, $0 covered-call capital, positive profit-capture in green) · Assigned Holdings section on Positions & Trades pages · Trades & P/L page (history, breakeven, cumulative P/L; live income/trades derived from transactions) · header Refresh button (per-user sync) · Market-data quotes (prices + greeks) · Advisor page (OpenAI): one-shot analysis + chat · Re-auth Reconnect button + Dashboard banner · CI Supabase-deploy Action · **Risk Manager page** (below).
+
+## Risk Recommendation Engine (`src/lib/risk/`, page `/risk`)
+Deterministic, storage-agnostic engine (mirrors the `src/lib/` pattern) that answers "is my portfolio healthy / what do I do next." Entry point: `analyzePortfolioRisk(pf: PortfolioView, profile)` in `engine.ts`, which adapts the `PortfolioView` into the PRD's Account/Equity/Option contracts, then computes everything.
+- **Load-bearing rule:** short puts are always valued at **full assignment obligation** (`strike × 100 × contracts`), never margin req or option value. Uncommitted liquidity (`cash − putObligation`) may be negative — that's the primary risk signal, not an error.
+- Modules: `bands.ts` (per-profile target bands + classify), `sectors.ts` (static ticker→sector map; unknowns degrade gracefully), `health.ts` (0–100 score, §11 weights — premium NEVER raises it), `stress.ts` (4 scenarios; severity keys off liquidity/exposure, not the NLV estimate), `recommendations.ts` (numeric actions + per-position ranking), `narrative.ts`, `engine.ts` (orchestrator).
+- **Risk profile + account type** persist on `profiles` (migration `0009`: `risk_profile`, `account_type`). Editable in Settings via the new **`POST /api/settings`** route (the Settings form now actually persists — previously a stub). Demo uses `seedProfile` defaults (balanced/cash). Colors added to `globals.css`: `--caution` (orange), `--leverage` (purple).
+- UI: `src/components/risk/*`. Demo book is a deliberately critical case (189% put obligations, negative liquidity) so every panel exercises.
 
 ## ⏳ Requested but NOT yet built (next up)
 1. **Remove the temporary `describeOptionPositions` / `optionsSeen` diagnostic** from `schwab-sync` once the position-sync issue is confirmed resolved.
