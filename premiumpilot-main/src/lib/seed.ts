@@ -30,6 +30,8 @@ export const seedProfile: Profile = {
   notify_web_push: false,
   discord_webhook_url: "https://discord.com/api/webhooks/demo/xxxx",
   timezone: "America/Denver",
+  risk_profile: "balanced",
+  account_type: "cash",
 };
 
 export const seedAccounts: ConnectedAccount[] = [

@@ -59,7 +59,7 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
     supabase
       .from("profiles")
       .select(
-        "id, income_goal_annual, notify_email, notify_discord, notify_web_push, discord_webhook_url, timezone"
+        "id, income_goal_annual, notify_email, notify_discord, notify_web_push, discord_webhook_url, timezone, risk_profile, account_type"
       )
       .eq("id", user.id)
       .maybeSingle(),
@@ -180,7 +180,17 @@ function normalizeProfile(profile: Partial<Profile> | null, userId: string): Pro
     notify_web_push: profile?.notify_web_push ?? false,
     discord_webhook_url: profile?.discord_webhook_url ?? null,
     timezone: profile?.timezone ?? "America/New_York",
+    risk_profile: isRiskProfile(profile?.risk_profile) ? profile.risk_profile : "balanced",
+    account_type: isRiskAccountType(profile?.account_type) ? profile.account_type : "cash",
   };
+}
+
+function isRiskProfile(value: unknown): value is Profile["risk_profile"] {
+  return value === "conservative" || value === "balanced" || value === "aggressive";
+}
+
+function isRiskAccountType(value: unknown): value is Profile["account_type"] {
+  return value === "cash" || value === "margin" || value === "ira";
 }
 
 function latestBalances(rows: Record<string, unknown>[]): AccountBalance[] {
