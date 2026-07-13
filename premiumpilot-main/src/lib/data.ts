@@ -7,6 +7,7 @@ import {
   seedPremiumHistory,
   seedProfile,
   seedTrades,
+  seedTransactions,
 } from "./seed";
 import { createClient } from "./supabase/server";
 import { deriveClosedOptionTrades } from "./trades";
@@ -39,7 +40,7 @@ export async function getPortfolio(): Promise<PortfolioView> {
     balances: seedBalances,
     positions: seedPositions,
     premiumHistory: seedPremiumHistory,
-    transactions: [],
+    transactions: seedTransactions,
     trades: seedTrades,
     assignedHoldings: seedAssignedHoldings,
   });

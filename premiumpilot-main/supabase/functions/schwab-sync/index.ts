@@ -179,6 +179,24 @@ const TX_SLICE_DAYS = 360; // Schwab caps each request at ~1 year
 // records (where a sold option's premium is finally realized).
 const TX_TYPES = ["TRADE", "RECEIVE_AND_DELIVER"];
 
+// External cash movements (deposits/withdrawals) that feed the Dashboard's "Net
+// Capital Invested" stat. Deposits carry a positive net_amount, withdrawals a
+// negative one. Keep in sync with CASH_FLOW_TYPES in src/lib/portfolio.ts, which
+// decides how the app sums these rows.
+const CASH_FLOW_TYPES = [
+  "ACH_RECEIPT",
+  "ACH_DISBURSEMENT",
+  "CASH_RECEIPT",
+  "CASH_DISBURSEMENT",
+  "ELECTRONIC_FUND",
+  "WIRE_IN",
+  "WIRE_OUT",
+];
+// Net-capital tracking starts here (user's choice). Deposits/withdrawals are
+// pulled from this date so the all-time net-contributed figure is complete,
+// independent of the shorter option-income lookback above.
+const CASH_FLOW_START = "2025-01-01T00:00:00.000Z";
+
 async function syncTransactions(
   db: ReturnType<typeof adminClient>,
   accessToken: string,
@@ -194,6 +212,19 @@ async function syncTransactions(
         if (Array.isArray(page)) raw.push(...page);
       } catch (e) {
         console.error("transaction fetch failed", type, w.start, e);
+      }
+    }
+  }
+
+  // Deposits/withdrawals, pulled from CASH_FLOW_START (may predate the option
+  // window above) so net capital invested reflects all contributions.
+  for (const w of transactionWindowsFrom(CASH_FLOW_START, new Date(), TX_SLICE_DAYS)) {
+    for (const type of CASH_FLOW_TYPES) {
+      try {
+        const page = await getTransactions(accessToken, accountHash, w.start, w.end, type);
+        if (Array.isArray(page)) raw.push(...page);
+      } catch (e) {
+        console.error("cash-flow fetch failed", type, w.start, e);
       }
     }
   }
@@ -217,8 +248,15 @@ async function syncTransactions(
 // Trailing date windows (newest last), each within Schwab's per-request range cap.
 function transactionWindows(now: Date, lookbackDays: number, sliceDays: number) {
   const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  return transactionWindowsFrom(new Date(now.getTime() - lookbackDays * MS_PER_DAY).toISOString(), now, sliceDays);
+}
+
+// Date windows from an explicit start (newest last), each within Schwab's
+// per-request range cap. Start is clamped to now so a future start yields none.
+function transactionWindowsFrom(startIso: string, now: Date, sliceDays: number) {
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
   const windows: { start: string; end: string }[] = [];
-  let cursor = now.getTime() - lookbackDays * MS_PER_DAY;
+  let cursor = Math.min(new Date(startIso).getTime(), now.getTime());
   while (cursor < now.getTime()) {
     const end = Math.min(cursor + sliceDays * MS_PER_DAY, now.getTime());
     windows.push({ start: new Date(cursor).toISOString(), end: new Date(end).toISOString() });

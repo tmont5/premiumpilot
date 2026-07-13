@@ -24,6 +24,11 @@ export default async function DashboardPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Net Liquidation Value" value={fmtCurrency0(t.netLiquidationValue)} />
+        <StatCard
+          label="Net Capital Invested"
+          value={fmtCurrency0(t.netCapitalInvested)}
+          hint="Deposits less withdrawals"
+        />
         <StatCard label="Cash Available" value={fmtCurrency0(t.cashAvailable)} />
         <StatCard label="Cash to Invest" value={fmtCurrency0(t.cashAvailableForTrading)} />
         <StatCard label="Capital Utilized" value={fmtPct(t.capitalUtilizationPct, 0)} />
@@ -40,6 +45,11 @@ export default async function DashboardPage() {
           label="Expected Assignment Exposure"
           value={fmtCurrency0(t.expectedAssignmentExposure)}
           hint="Capital at risk weighted by probability ITM"
+        />
+        <StatCard
+          label="Put Assignment Exposure"
+          value={fmtCurrency0(t.putAssignmentExposure)}
+          hint="Stock cost if every short put were assigned"
         />
         <StatCard label="Active Alerts" value={String(pf.alerts.length)} />
       </div>
