@@ -1,4 +1,4 @@
-import { buildPortfolio, type PortfolioView } from "./portfolio";
+import { buildPortfolio, CASH_FLOW_TYPES, type PortfolioView } from "./portfolio";
 import {
   seedAccounts,
   seedAssignedHoldings,
@@ -131,6 +131,38 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
   const transactions = ((transactionsResult.data ?? []) as Record<string, unknown>[]).map(
     normalizeTransaction
   );
+
+  // TEMP DIAGNOSTIC (remove after reconciling Net Capital Invested): log the
+  // cash-movement rows being summed, grouped by type, plus each row, so we can
+  // see what's inflating the figure vs. actual deposits.
+  try {
+    const cf = transactions.filter((t) => t.type && CASH_FLOW_TYPES.has(t.type));
+    const byType: Record<string, { count: number; sum: number }> = {};
+    for (const t of cf) {
+      const k = t.type as string;
+      byType[k] ??= { count: 0, sum: 0 };
+      byType[k].count += 1;
+      byType[k].sum += t.net_amount;
+    }
+    const total = cf.reduce((s, t) => s + t.net_amount, 0);
+    console.log(
+      "[cashflow-diag]",
+      JSON.stringify({
+        total,
+        rowCount: cf.length,
+        byType,
+        rows: cf.map((t) => ({
+          d: t.transaction_time.slice(0, 10),
+          type: t.type,
+          amt: t.net_amount,
+          desc: t.description,
+        })),
+      })
+    );
+  } catch (e) {
+    console.error("[cashflow-diag] failed", e);
+  }
+
   // Closed option trades (and the realized income the Income page rolls up) are
   // reconstructed from the synced transactions.
   const trades = deriveClosedOptionTrades(transactions);
