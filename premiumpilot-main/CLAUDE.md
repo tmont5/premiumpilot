@@ -69,9 +69,10 @@ Deterministic, storage-agnostic engine (mirrors the `src/lib/` pattern) that ans
 ## ⏳ Requested but NOT yet built (next up)
 1. **Remove the temporary `describeOptionPositions` / `optionsSeen` diagnostic** from `schwab-sync` once the position-sync issue is confirmed resolved.
 
-## ✅ Recently shipped (Dashboard stats)
-- **Net Capital Invested** — net external cash contributed (deposits − withdrawals). The sync now also pulls Schwab cash-movement types (`CASH_FLOW_TYPES` in `schwab-sync/index.ts`: `ACH_RECEIPT`/`ACH_DISBURSEMENT`/`CASH_RECEIPT`/`CASH_DISBURSEMENT`/`ELECTRONIC_FUND`/`WIRE_IN`/`WIRE_OUT`) from **2025-01-01** (`CASH_FLOW_START`) forward, on top of the existing 400-day `TRADE`+`RECEIVE_AND_DELIVER` window. The app sums `net_amount` over those rows in `buildPortfolio()` (`CASH_FLOW_TYPES` in `src/lib/portfolio.ts` — **keep the two lists in sync**). No new column: rows already land in `account_transactions`. Demo shows $52,000 from `seedTransactions`.
+## ✅ Recently shipped
+- **Exclude stock holdings from analysis** — Accounts page holdings manager: each synced equity lot has an include/exclude toggle. Excluded lots are dropped from every analytic (owned stock, concentration, Risk Manager, Assigned Holdings) AND their market value is subtracted from NLV, so figures reconcile (user's choice: remove everywhere). Persistence: `excluded_holdings` table (migration `0010`, keyed by `connected_account_id, ticker` so it survives the delete-then-insert sync), applied in `getLivePortfolio`; demo uses a cookie (`EXCLUSIONS_COOKIE`) so it's fully functional there too. Toggle route: `POST /api/holdings/exclusions`. `PortfolioView.stockHoldings` carries the full list (excluded flag) for the Accounts UI. **Caveat:** excluding a stock that backs a covered call makes that call read as uncovered in the Risk analysis (expected — the shares no longer count).
 - **Put Assignment Exposure** — Σ(strike × 100 × contracts) over `cash_secured_put` positions (`totals.putAssignmentExposure`). Demo shows $123,600.
+- ~~Net Capital Invested / Cash to Invest dashboard cards~~ — **removed from the dashboard** at the user's request (net-capital figure over-counted vs. actual deposits and was confusing). The `netCapitalInvested` calc + `CASH_FLOW_TYPES` sync fetching remain in the code but are now unused by the UI — safe to fully rip out later if desired.
 
 ## Outstanding ops items (user-side)
 - Reconnect Schwab (token expired — `needs_reauth`) so live data syncs again.

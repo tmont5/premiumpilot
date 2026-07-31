@@ -1,4 +1,5 @@
-import { buildPortfolio, CASH_FLOW_TYPES, type PortfolioView } from "./portfolio";
+import { cookies } from "next/headers";
+import { buildPortfolio, type PortfolioView } from "./portfolio";
 import {
   seedAccounts,
   seedAssignedHoldings,
@@ -19,8 +20,64 @@ import type {
   Position,
   PremiumHistoryEntry,
   Profile,
+  StockHolding,
   Trade,
 } from "./types";
+
+// Cookie that holds excluded-holding keys in demo mode (no DB). Each key is
+// `${connected_account_id}::${ticker}`. Shared with /api/holdings/exclusions.
+export const EXCLUSIONS_COOKIE = "pp_excluded_holdings";
+
+export function holdingKey(connectedAccountId: string, ticker: string): string {
+  return `${connectedAccountId}::${ticker}`;
+}
+
+async function readExcludedKeysFromCookie(): Promise<Set<string>> {
+  try {
+    const raw = (await cookies()).get(EXCLUSIONS_COOKIE)?.value;
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.map(String)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+// Builds the Accounts-page holdings list (every lot, with an `excluded` flag)
+// from raw {connected_account_id, ticker, shares, current_price} rows.
+function toStockHoldings(
+  rows: { connected_account_id: string; ticker: string; shares: number; current_price: number }[],
+  excluded: Set<string>
+): StockHolding[] {
+  return rows.map((r) => ({
+    connected_account_id: r.connected_account_id,
+    ticker: r.ticker,
+    shares: r.shares,
+    current_price: r.current_price,
+    market_value: r.shares * r.current_price,
+    excluded: excluded.has(holdingKey(r.connected_account_id, r.ticker)),
+  }));
+}
+
+// Subtracts each account's excluded-holding market value from its NLV so the
+// analysis reconciles (user chose to remove excluded holdings everywhere).
+function adjustBalancesForExclusions(
+  balances: AccountBalance[],
+  excludedValueByAccount: Map<string, number>
+): AccountBalance[] {
+  return balances.map((b) => {
+    const drop = excludedValueByAccount.get(b.connected_account_id) ?? 0;
+    return drop ? { ...b, net_liquidation_value: b.net_liquidation_value - drop } : b;
+  });
+}
+
+function excludedValueByAccount(holdings: StockHolding[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const h of holdings) {
+    if (h.excluded) out.set(h.connected_account_id, (out.get(h.connected_account_id) ?? 0) + h.market_value);
+  }
+  return out;
+}
 
 // True when no live Supabase project is wired up yet. In that case the app runs
 // against the in-repo demo dataset so every screen is fully usable.
@@ -34,15 +91,24 @@ export async function getPortfolio(): Promise<PortfolioView> {
     if (live) return live;
   }
 
+  // Demo has no DB, so exclusions live in a cookie the Accounts page toggles.
+  const excludedKeys = await readExcludedKeysFromCookie();
+  const stockHoldings = toStockHoldings(seedAssignedHoldings, excludedKeys);
+  const includedHoldings = seedAssignedHoldings.filter(
+    (h) => !excludedKeys.has(holdingKey(h.connected_account_id, h.ticker))
+  );
+  const balances = adjustBalancesForExclusions(seedBalances, excludedValueByAccount(stockHoldings));
+
   return buildPortfolio({
     profile: seedProfile,
     accounts: seedAccounts,
-    balances: seedBalances,
+    balances,
     positions: seedPositions,
     premiumHistory: seedPremiumHistory,
     transactions: seedTransactions,
     trades: seedTrades,
-    assignedHoldings: seedAssignedHoldings,
+    assignedHoldings: includedHoldings,
+    stockHoldings,
   });
 }
 
@@ -55,7 +121,8 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const [profileResult, accountsResult, premiumResult, transactionsResult] = await Promise.all([
+  const [profileResult, accountsResult, premiumResult, transactionsResult, exclusionsResult] =
+    await Promise.all([
     supabase
       .from("profiles")
       .select(
@@ -82,12 +149,27 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
       )
       .eq("user_id", user.id)
       .order("transaction_time", { ascending: false }),
+    supabase.from("excluded_holdings").select("connected_account_id, ticker").eq("user_id", user.id),
   ]);
 
   if (profileResult.error) throw profileResult.error;
   if (accountsResult.error) throw accountsResult.error;
   if (premiumResult.error) throw premiumResult.error;
   if (transactionsResult.error && transactionsResult.error.code !== "42P01") throw transactionsResult.error;
+  // excluded_holdings may not be provisioned yet — treat a missing table as "no
+  // exclusions" (missing-table codes: 42P01 / PGRST205) rather than failing.
+  if (
+    exclusionsResult.error &&
+    exclusionsResult.error.code !== "42P01" &&
+    exclusionsResult.error.code !== "PGRST205"
+  ) {
+    console.warn("excluded_holdings unavailable; treating as none:", exclusionsResult.error.message);
+  }
+  const excludedKeys = new Set(
+    ((exclusionsResult.error ? [] : exclusionsResult.data ?? []) as Record<string, unknown>[]).map((r) =>
+      holdingKey(String(r.connected_account_id), String(r.ticker))
+    )
+  );
 
   const accountIds = (accountsResult.data ?? []).map((account) => account.id);
   const [balancesResult, positionsResult, equityResult] = await Promise.all([
@@ -132,50 +214,40 @@ async function getLivePortfolio(): Promise<PortfolioView | null> {
     normalizeTransaction
   );
 
-  // TEMP DIAGNOSTIC (remove after reconciling Net Capital Invested): log the
-  // cash-movement rows being summed, grouped by type, plus each row, so we can
-  // see what's inflating the figure vs. actual deposits.
-  try {
-    const cf = transactions.filter((t) => t.type && CASH_FLOW_TYPES.has(t.type));
-    const byType: Record<string, { count: number; sum: number }> = {};
-    for (const t of cf) {
-      const k = t.type as string;
-      byType[k] ??= { count: 0, sum: 0 };
-      byType[k].count += 1;
-      byType[k].sum += t.net_amount;
-    }
-    const total = cf.reduce((s, t) => s + t.net_amount, 0);
-    console.log(
-      "[cashflow-diag]",
-      JSON.stringify({
-        total,
-        rowCount: cf.length,
-        byType,
-        rows: cf.map((t) => ({
-          d: t.transaction_time.slice(0, 10),
-          type: t.type,
-          amt: t.net_amount,
-          desc: t.description,
-        })),
-      })
-    );
-  } catch (e) {
-    console.error("[cashflow-diag] failed", e);
-  }
-
   // Closed option trades (and the realized income the Income page rolls up) are
   // reconstructed from the synced transactions.
   const trades = deriveClosedOptionTrades(transactions);
 
+  // Holdings manager: list every synced lot with its excluded flag, then drop
+  // excluded lots from the analysis and subtract their value from NLV so every
+  // figure reconciles.
+  const stockHoldings = toStockHoldings(
+    equityRows.map((row) => ({
+      connected_account_id: String(row.connected_account_id),
+      ticker: String(row.ticker),
+      shares: number(row.shares),
+      current_price: number(row.current_price),
+    })),
+    excludedKeys
+  );
+  const includedEquityRows = equityRows.filter(
+    (row) => !excludedKeys.has(holdingKey(String(row.connected_account_id), String(row.ticker)))
+  );
+  const balances = adjustBalancesForExclusions(
+    latestBalances(balancesResult.data ?? []),
+    excludedValueByAccount(stockHoldings)
+  );
+
   return buildPortfolio({
     profile: normalizeProfile(profileResult.data, user.id),
     accounts: (accountsResult.data ?? []) as ConnectedAccount[],
-    balances: latestBalances(balancesResult.data ?? []),
+    balances,
     positions: (positionsResult.data ?? []).map(normalizePosition),
     premiumHistory: (premiumResult.data ?? []).map(normalizePremium),
     transactions,
     trades,
-    assignedHoldings: buildAssignedHoldings(equityRows, trades),
+    assignedHoldings: buildAssignedHoldings(includedEquityRows, trades),
+    stockHoldings,
   });
 }
 

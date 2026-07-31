@@ -182,6 +182,19 @@ export interface AssignedHoldingMetrics {
 
 export type EnrichedAssignedHolding = AssignedHolding & { metrics: AssignedHoldingMetrics };
 
+// A raw stock/ETF lot for the Accounts page's holdings manager. Lists every
+// synced equity holding (excluded or not) so the user can toggle whether it
+// counts toward the analysis. `excluded` holdings are dropped from every
+// analytic and their market value is subtracted from NLV.
+export interface StockHolding {
+  connected_account_id: string;
+  ticker: string;
+  shares: number;
+  current_price: number;
+  market_value: number;
+  excluded: boolean;
+}
+
 export interface PnlSummary {
   realized: number; // sum of closed-trade realized P/L
   unrealizedOptions: number; // open option positions marked to market

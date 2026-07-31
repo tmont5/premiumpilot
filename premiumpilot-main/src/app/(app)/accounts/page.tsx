@@ -11,7 +11,12 @@ export default async function AccountsPage() {
         title="Connected Accounts"
         description="Manage your Schwab connections and combined-view settings."
       />
-      <AccountsView accounts={pf.accounts} balances={pf.balances} connectUrl="/api/schwab/connect" />
+      <AccountsView
+        accounts={pf.accounts}
+        balances={pf.balances}
+        stockHoldings={pf.stockHoldings}
+        connectUrl="/api/schwab/connect"
+      />
     </>
   );
 }

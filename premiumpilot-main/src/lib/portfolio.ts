@@ -10,6 +10,7 @@ import type {
   Position,
   Profile,
   ScoreBreakdown,
+  StockHolding,
   Trade,
 } from "./types";
 import { enrich, probabilityItm } from "./calc";
@@ -43,6 +44,7 @@ export interface PortfolioInput {
   transactions: AccountTransaction[];
   trades: Trade[];
   assignedHoldings: AssignedHolding[];
+  stockHoldings?: StockHolding[];
 }
 
 export interface PortfolioView {
@@ -55,6 +57,7 @@ export interface PortfolioView {
   transactions: AccountTransaction[];
   trades: Trade[];
   assignedHoldings: EnrichedAssignedHolding[];
+  stockHoldings: StockHolding[];
   pnl: PnlSummary;
   score: ScoreBreakdown;
   alerts: GeneratedAlert[];
@@ -97,6 +100,7 @@ export interface PortfolioView {
 export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): PortfolioView {
   const { profile, accounts, balances, positions, premiumHistory, transactions, trades, assignedHoldings } =
     input;
+  const stockHoldings = input.stockHoldings ?? [];
   const enriched = enrich(positions, now);
   const holdings = enrichAssignedHoldings(assignedHoldings);
   const pnl = buildPnl(trades, holdings, enriched, now);
@@ -150,6 +154,7 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
     transactions,
     trades,
     assignedHoldings: holdings,
+    stockHoldings,
     pnl,
     score,
     alerts,
