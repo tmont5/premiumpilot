@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import type { AccountBalance, ConnectedAccount } from "@/lib/types";
-import { fmtCurrency0, fmtRelativeTime } from "@/lib/format";
+import type { AccountBalance, ConnectedAccount, StockHolding } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { fmtCurrency0, fmtNumber, fmtRelativeTime } from "@/lib/format";
 import { CheckCircle2, AlertTriangle, Plus, Trash2 } from "lucide-react";
 
 const TYPE_LABEL: Record<ConnectedAccount["account_type"], string> = {
@@ -19,10 +20,12 @@ const TYPE_LABEL: Record<ConnectedAccount["account_type"], string> = {
 export function AccountsView({
   accounts,
   balances,
+  stockHoldings = [],
   connectUrl,
 }: {
   accounts: ConnectedAccount[];
   balances: AccountBalance[];
+  stockHoldings?: StockHolding[];
   connectUrl: string | null;
 }) {
   const router = useRouter();
@@ -31,7 +34,45 @@ export function AccountsView({
   const [pendingRemoval, setPendingRemoval] = useState<ConnectedAccount | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
   const balanceFor = (id: string) => balances.find((b) => b.connected_account_id === id);
+  const labelFor = (id: string) => accounts.find((a) => a.id === id)?.account_label ?? "Account";
   const totalNetLiq = balances.reduce((s, b) => s + b.net_liquidation_value, 0);
+
+  const [togglingKey, setTogglingKey] = useState<string | null>(null);
+  const [holdingsError, setHoldingsError] = useState<string | null>(null);
+
+  async function toggleHolding(h: StockHolding, exclude: boolean) {
+    const key = `${h.connected_account_id}::${h.ticker}`;
+    setHoldingsError(null);
+    setTogglingKey(key);
+    try {
+      const res = await fetch("/api/holdings/exclusions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connected_account_id: h.connected_account_id,
+          ticker: h.ticker,
+          excluded: exclude,
+        }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => null);
+        throw new Error(b?.error ?? "Could not update holding");
+      }
+      router.refresh();
+    } catch (e) {
+      setHoldingsError(e instanceof Error ? e.message : "Could not update holding");
+    } finally {
+      setTogglingKey(null);
+    }
+  }
+
+  const holdingsByAccount = new Map<string, StockHolding[]>();
+  for (const h of stockHoldings) {
+    const list = holdingsByAccount.get(h.connected_account_id) ?? [];
+    list.push(h);
+    holdingsByAccount.set(h.connected_account_id, list);
+  }
+  const excludedCount = stockHoldings.filter((h) => h.excluded).length;
 
   async function removeAccount(account: ConnectedAccount) {
     setRemoveError(null);
@@ -167,6 +208,69 @@ export function AccountsView({
           </CardContent>
         </Card>
       </div>
+
+      {stockHoldings.length > 0 && (
+        <Card>
+          <CardContent className="space-y-4 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Stock holdings in analysis</p>
+                <p className="text-xs text-muted-foreground">
+                  Turn a holding off to remove it from every analytic (owned stock, concentration, Risk
+                  Manager, Assigned Holdings) and subtract its value from Net Liquidation Value.
+                </p>
+              </div>
+              {excludedCount > 0 && <Badge variant="secondary">{excludedCount} excluded</Badge>}
+            </div>
+
+            {holdingsError && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {holdingsError}
+              </div>
+            )}
+
+            <div className="space-y-5">
+              {[...holdingsByAccount.entries()].map(([accountId, holdings]) => (
+                <div key={accountId} className="space-y-1">
+                  {holdingsByAccount.size > 1 && (
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {labelFor(accountId)}
+                    </p>
+                  )}
+                  {holdings.map((h) => {
+                    const key = `${h.connected_account_id}::${h.ticker}`;
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className={cn("text-sm font-medium", h.excluded && "text-muted-foreground line-through")}>
+                            {h.ticker}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {fmtNumber(h.shares)} sh · {fmtCurrency0(h.market_value)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            {h.excluded ? "Excluded" : "In analysis"}
+                          </span>
+                          <Switch
+                            checked={!h.excluded}
+                            disabled={togglingKey === key}
+                            onCheckedChange={(on) => toggleHolding(h, !on)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {pendingRemoval && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 px-4 backdrop-blur-sm">
