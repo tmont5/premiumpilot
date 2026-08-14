@@ -139,7 +139,13 @@ export function buildPortfolio(input: PortfolioInput, now: Date = new Date()): P
 
   const incomeHistory = realizedIncomeEntries(premiumHistory, trades);
   const income = buildIncome(incomeHistory, profile.income_goal_annual, now);
-  const score = computeScore({ positions: enriched, cashAvailable });
+  const score = computeScore({
+    positions: enriched,
+    holdings,
+    pnl,
+    netLiquidationValue: netLiq,
+    cashAvailable,
+  });
   const alerts = generateAlerts(enriched, { buyingPower, cashAvailable });
 
   const suggestedNewTrades = Math.floor(buyingPower / ENGINE_CONFIG.cash.typicalCapitalPerTrade);
