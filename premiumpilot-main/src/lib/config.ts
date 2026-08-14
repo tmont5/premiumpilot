@@ -34,10 +34,13 @@ export const ENGINE_CONFIG = {
   },
 
   // --- Portfolio score weights (PRD §8) ---
+  // The dashboard "Portfolio Score" is a quality score: it rewards a profitable,
+  // deployed, well-covered book and docks mainly for poor diversification. (The
+  // Risk Manager score is a separate, solvency-focused number — see risk/health.)
   scoreWeights: {
-    profitability: 0.3,
-    capitalEfficiency: 0.25,
-    diversification: 0.15,
+    profitability: 0.25,
+    capitalEfficiency: 0.2,
+    diversification: 0.25,
     timeRisk: 0.15,
     assignmentRisk: 0.15,
   },
