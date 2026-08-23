@@ -20,12 +20,18 @@ import type { OptionCandidate } from "./schwab.ts";
 import {
   atr,
   closes as toCloses,
+  divergence,
   fiftyTwoWeekLow,
   macd,
+  obv,
   pctReturn,
   recentSwingLow,
   rsi,
+  rsiSeries,
   sma,
+  smaSlope,
+  supportTouches,
+  trendStructure,
   type Candle,
 } from "./indicators.ts";
 
@@ -385,8 +391,12 @@ function scoreTrade(opt: OptionCandidate, t: TickerInput, config: BotConfig, mar
   const support = recentSwingLow(t.candles, 20);
   const aiRiskFlags: string[] = [];
 
+  const rsiSer = rsiSeries(cl, 14);
+  const div = divergence(t.candles, rsiSer);
+  if (div.bearish) aiRiskFlags.push("Bearish price/RSI divergence — momentum weakening at the highs.");
+
   const quality = scoreQuality(t, breakeven, price);
-  const technical = scoreTechnical(t, cl, breakeven, market);
+  const technical = scoreTechnical(t, cl, breakeven, market, div);
   const option = scoreOption(simple, opt, config, support, breakeven);
   const liquidity = scoreLiquidity(opt, spreadPct);
   const downside = scoreDownside(t, cl, breakeven, cushion, support);
@@ -479,36 +489,56 @@ function scoreQuality(t: TickerInput, breakeven: number, price: number): number 
   return clamp(round2(s), 0, 25);
 }
 
-function scoreTechnical(t: TickerInput, cl: number[], breakeven: number, market: MarketContext): number {
+// Technical setup (25) — Murphy framework, deterministic. Trend is read
+// highest-timeframe-first (SMA200 direction), structure (HH/HL) confirms it,
+// participation (OBV) confirms the move, and momentum/divergence flag exhaustion.
+function scoreTechnical(
+  t: TickerInput,
+  cl: number[],
+  breakeven: number,
+  market: MarketContext,
+  div: { bearish: boolean; bullish: boolean }
+): number {
   const price = t.currentPrice;
   const sma20 = sma(cl, 20);
   const sma50 = sma(cl, 50);
   const sma200 = sma(cl, 200);
+  const slope200 = smaSlope(cl, 200, 20);
+  const slope50 = smaSlope(cl, 50, 10);
   const support = recentSwingLow(t.candles, 20);
+  const structure = trendStructure(t.candles);
+  const participation = obv(t.candles, 10);
   let s = 0;
 
-  // Trend quality (6).
+  // Trend quality (6): long-term direction (SMA200 + its slope) first, then
+  // intermediate (SMA50 slope), then structure (higher highs/lows).
   let trend = 0;
-  if (sma50 && price > sma50) trend += 2;
-  if (sma200 && price > sma200) trend += 2;
-  if (sma20 && sma50 && sma20 > sma50) trend += 1;
-  if (sma20 && price > sma20) trend += 1;
+  if (sma200 && price > sma200) trend += 1.5;
+  if (slope200 != null && slope200 > 0) trend += 1.5;
+  if (sma50 && price > sma50 && slope50 != null && slope50 > 0) trend += 1.5;
+  if (structure.higherHighs && structure.higherLows) trend += 1.5;
+  else if (structure.label === "downtrend") trend -= 1;
   s += clamp(trend, 0, 6);
 
-  // Strike / support alignment (7): breakeven below key supports.
+  // Strike / support alignment (7): breakeven under meaningful support, and the
+  // stronger when several swing lows cluster near it.
   let align = 0;
-  if (support && breakeven <= support) align += 2.5;
-  if (sma50 && breakeven <= sma50) align += 2;
+  if (support && breakeven <= support) align += 2;
+  if (sma50 && breakeven <= sma50) align += 1.5;
   if (sma200 && breakeven <= sma200) align += 1.5;
-  if (support && breakeven <= support * 0.98) align += 1; // comfortably below
+  const touches = supportTouches(t.candles, breakeven, 0.02);
+  align += touches >= 2 ? 2 : touches === 1 ? 1 : 0;
   s += clamp(align, 0, 7);
 
-  // Momentum (5): mid-range RSI best; reward improving MACD; punish nothing near overextension.
+  // Momentum (5): mid-range RSI, rising MACD, divergence. Don't reward momentum
+  // near the overextension threshold; penalize bearish divergence.
   const r = rsi(cl, 14);
   const m = macd(cl);
   let mo = 0;
   if (r != null) mo += r >= 40 && r <= 60 ? 3 : r > 60 && r <= 68 ? 1.5 : r < 40 ? 2 : 0;
-  if (m) mo += m.hist > 0 ? 2 : 0.5;
+  if (m) mo += m.hist > 0 ? 1.5 : 0.5;
+  if (div.bullish) mo += 1;
+  if (div.bearish) mo -= 1.5;
   s += clamp(mo, 0, 5);
 
   // Relative strength (4): stock 20d vs SPY 20d.
@@ -519,14 +549,17 @@ function scoreTechnical(t: TickerInput, cl: number[], breakeven: number, market:
     s += 2; // neutral when benchmark missing
   }
 
-  // Volatility behavior (3): lower ATR% is steadier.
+  // Volatility & participation (3): steadier ATR + OBV confirming the trend.
   const a = atr(t.candles, 14);
+  let vol = 0;
   if (a != null && price > 0) {
     const atrPct = a / price;
-    s += atrPct < 0.02 ? 3 : atrPct < 0.035 ? 2 : atrPct < 0.05 ? 1 : 0.3;
+    vol += atrPct < 0.02 ? 2 : atrPct < 0.035 ? 1.4 : atrPct < 0.05 ? 0.8 : 0.2;
   } else {
-    s += 1.5;
+    vol += 1;
   }
+  if (participation) vol += participation.rising ? 1 : 0.2; // volume confirmation
+  s += clamp(vol, 0, 3);
 
   return clamp(round2(s), 0, 25);
 }
