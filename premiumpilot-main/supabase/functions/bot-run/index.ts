@@ -15,7 +15,7 @@ import {
   optionCandidatesFromChain,
   refreshTokens,
 } from "../_shared/schwab.ts";
-import { getNextEarningsDate } from "../_shared/marketdata.ts";
+import { fetchEarningsCalendar } from "../_shared/marketdata.ts";
 import { APPROVED_SECTORS, APPROVED_UNIVERSE, toSchwabSymbol } from "../_shared/universe.ts";
 import { pctReturn, type Candle } from "../_shared/indicators.ts";
 import {
@@ -87,10 +87,13 @@ async function runForUser(db: ReturnType<typeof adminClient>, s: any, trigger: s
   const completeToday = state && state.scan_date === today && state.cursor >= (state.universe_size ?? universe.length);
   if (stale || (trigger === "manual" && completeToday)) {
     const spy = await computeSpyReturn20(accessToken);
+    // One earnings-calendar fetch per scan, reused across all chunks.
+    const earnings = await fetchEarningsCalendar(universe);
     await db.from("bot_scan_candidates").delete().eq("user_id", s.user_id);
     const init = {
       user_id: s.user_id, scan_date: today, cursor: 0, universe_size: universe.length,
-      spy_return20: spy, contracts_evaluated: 0, rejected_before_options: 0, updated_at: new Date().toISOString(),
+      spy_return20: spy, earnings: earnings.map, earnings_available: earnings.available,
+      contracts_evaluated: 0, rejected_before_options: 0, updated_at: new Date().toISOString(),
     };
     await db.from("bot_scan_state").upsert(init, { onConflict: "user_id" });
     state = init;
@@ -101,6 +104,8 @@ async function runForUser(db: ReturnType<typeof adminClient>, s: any, trigger: s
   }
 
   const market = { spyReturn20: state.spy_return20 == null ? null : Number(state.spy_return20) };
+  const earningsMap = (state.earnings ?? {}) as Record<string, string>;
+  const earningsAvailable = Boolean(state.earnings_available);
   const now = new Date();
   const fromISO = today;
   const toISO = new Date(now.getTime() + (config.maxDte + 5) * MS_PER_DAY).toISOString().slice(0, 10);
@@ -114,7 +119,7 @@ async function runForUser(db: ReturnType<typeof adminClient>, s: any, trigger: s
   while (cursor < universe.length && processed < MAX_BATCH && Date.now() - start < BUDGET_MS) {
     const ticker = universe[cursor];
     try {
-      const input = await buildTickerInput(accessToken, ticker, config, fromISO, toISO);
+      const input = await buildTickerInput(accessToken, ticker, config, fromISO, toISO, earningsMap, earningsAvailable);
       const ev = evaluateTicker(input, config, market, now);
       contractsEvaluated += ev.contractsEvaluated;
       if (ev.rejectedBeforeOptions) rejectedBeforeOptions += 1;
@@ -212,20 +217,22 @@ async function finalize(db: ReturnType<typeof adminClient>, s: any, config: BotC
   return { complete: true, published: report.published.length, universe: universeSize };
 }
 
-// Gather everything the engine needs for one ticker.
+// Gather everything the engine needs for one ticker. Earnings come from the
+// per-scan calendar map (fetched once), not a per-ticker call.
 async function buildTickerInput(
   accessToken: string,
   ticker: string,
   config: BotConfig,
   fromISO: string,
-  toISO: string
+  toISO: string,
+  earningsMap: Record<string, string>,
+  earningsAvailable: boolean
 ): Promise<TickerInput> {
   const schwabSym = toSchwabSymbol(ticker);
-  const [rawCandles, fundamentals, chain, earnings] = await Promise.all([
+  const [rawCandles, fundamentals, chain] = await Promise.all([
     getPriceHistory(accessToken, schwabSym),
     getInstrumentFundamentals(accessToken, schwabSym),
     getOptionChain(accessToken, schwabSym, { contractType: "PUT", range: "OTM", strikeCount: 30, fromDate: fromISO, toDate: toISO }),
-    getNextEarningsDate(ticker, fromISO, new Date(Date.now() + 90 * MS_PER_DAY).toISOString().slice(0, 10)),
   ]);
 
   const candles: Candle[] = (rawCandles as any[]).map((c) => ({
@@ -242,8 +249,10 @@ async function buildTickerInput(
     candles,
     fundamentals,
     options,
-    earningsDate: earnings.date,
-    earningsKnown: earnings.known,
+    earningsDate: earningsMap[ticker] ?? null,
+    // If the calendar was fetched, a ticker absent from it simply has no upcoming
+    // earnings in the window (safe); if the calendar is unavailable, fail closed.
+    earningsKnown: earningsAvailable,
   };
 }
 

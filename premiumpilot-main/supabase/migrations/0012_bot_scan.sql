@@ -18,6 +18,8 @@ create table if not exists bot_scan_state (
   cursor int not null default 0,
   universe_size int not null default 0,
   spy_return20 numeric(10, 6),
+  earnings jsonb not null default '{}'::jsonb,       -- TICKER → next earnings date, per scan
+  earnings_available boolean not null default false, -- false → event filter fails closed
   contracts_evaluated int not null default 0,
   rejected_before_options int not null default 0,
   started_at timestamptz not null default now(),
