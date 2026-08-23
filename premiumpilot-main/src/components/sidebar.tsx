@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Bot,
   Grid3x3,
   LayoutDashboard,
   PiggyBank,
@@ -23,6 +24,7 @@ const NAV = [
   { href: "/cash", label: "Cash", icon: Wallet },
   { href: "/income", label: "Income", icon: PiggyBank },
   { href: "/trades", label: "Trades & P/L", icon: Receipt },
+  { href: "/bot", label: "Auto Trader", icon: Bot },
   { href: "/advisor", label: "Advisor", icon: Sparkles },
   { href: "/accounts", label: "Accounts", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
