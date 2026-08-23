@@ -145,6 +145,146 @@ export async function getQuotes(accessToken: string, symbols: string[]): Promise
   return out;
 }
 
+// Daily price history (Market Data API) — for the bot's technical indicators.
+// Returns Schwab's candle array [{open,high,low,close,volume,datetime}].
+// deno-lint-ignore no-explicit-any
+export async function getPriceHistory(
+  accessToken: string,
+  symbol: string,
+  opts: { periodType?: string; period?: number; frequencyType?: string; frequency?: number } = {}
+): Promise<any[]> {
+  const params = new URLSearchParams({ symbol });
+  params.set("periodType", opts.periodType ?? "year");
+  params.set("period", String(opts.period ?? 1));
+  params.set("frequencyType", opts.frequencyType ?? "daily");
+  params.set("frequency", String(opts.frequency ?? 1));
+  const data = await authedGetMarket(`/pricehistory?${params.toString()}`, accessToken);
+  return Array.isArray(data?.candles) ? data.candles : [];
+}
+
+// Fundamental ratios (Market Data API → instruments?projection=fundamental).
+// Normalized to the fields the wheel engine's quality score reads. Returns null
+// when unavailable (the engine then treats it as INSUFFICIENT_DATA).
+// deno-lint-ignore no-explicit-any
+export async function getInstrumentFundamentals(accessToken: string, symbol: string): Promise<any | null> {
+  try {
+    const params = new URLSearchParams({ symbol, projection: "fundamental" });
+    const data = await authedGetMarket(`/instruments?${params.toString()}`, accessToken);
+    const inst = Array.isArray(data?.instruments) ? data.instruments[0] : data?.[symbol] ?? data;
+    const f = inst?.fundamental;
+    if (!f || typeof f !== "object") return null;
+    return {
+      peRatio: numOrUndef(f.peRatio),
+      pegRatio: numOrUndef(f.pegRatio),
+      pbRatio: numOrUndef(f.pbRatio),
+      dividendYield: numOrUndef(f.dividendYield),
+      dividendAmount: numOrUndef(f.dividendAmount),
+      netProfitMarginTTM: numOrUndef(f.netProfitMarginTTM),
+      operatingMarginTTM: numOrUndef(f.operatingMarginTTM),
+      grossMarginTTM: numOrUndef(f.grossMarginTTM),
+      returnOnEquity: numOrUndef(f.returnOnEquity),
+      returnOnAssets: numOrUndef(f.returnOnAssets),
+      totalDebtToEquity: numOrUndef(f.totalDebtToEquity),
+      ltDebtToEquity: numOrUndef(f.ltDebtToEquity),
+      interestCoverage: numOrUndef(f.interestCoverage),
+      currentRatio: numOrUndef(f.currentRatio),
+      quickRatio: numOrUndef(f.quickRatio),
+      marketCap: numOrUndef(f.marketCap ?? f.marketCapFloat),
+      marketCapFloat: numOrUndef(f.marketCapFloat),
+      epsTTM: numOrUndef(f.epsTTM),
+      revChangeTTM: numOrUndef(f.revChangeTTM),
+    };
+  } catch (e) {
+    console.error("fundamentals fetch failed", symbol, e);
+    return null;
+  }
+}
+
+function numOrUndef(v: unknown): number | undefined {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+// Option chain (Market Data API) for a single underlying. The bot uses this to
+// find candidate contracts. Returns Schwab's raw chain payload.
+// deno-lint-ignore no-explicit-any
+export async function getOptionChain(
+  accessToken: string,
+  symbol: string,
+  opts: {
+    contractType?: "PUT" | "CALL" | "ALL";
+    fromDate?: string;
+    toDate?: string;
+    strikeCount?: number;
+    range?: string; // ITM | NTM | OTM | ALL
+  } = {}
+): Promise<any> {
+  const params = new URLSearchParams({ symbol });
+  params.set("contractType", opts.contractType ?? "ALL");
+  if (opts.fromDate) params.set("fromDate", opts.fromDate);
+  if (opts.toDate) params.set("toDate", opts.toDate);
+  if (opts.strikeCount) params.set("strikeCount", String(opts.strikeCount));
+  if (opts.range) params.set("range", opts.range);
+  return authedGetMarket(`/chains?${params.toString()}`, accessToken);
+}
+
+// A single option contract, normalized for the decision engine.
+export interface OptionCandidate {
+  symbol: string;
+  ticker: string;
+  putCall: "PUT" | "CALL";
+  strike: number;
+  expiration: string; // ISO date (YYYY-MM-DD)
+  dte: number;
+  delta: number;
+  bid: number;
+  ask: number;
+  mark: number;
+  iv: number; // implied volatility
+  openInterest: number;
+  underlyingPrice: number;
+}
+
+// Flattens Schwab's putExpDateMap / callExpDateMap (keyed "YYYY-MM-DD:DTE" then
+// strike) into a flat candidate list the rules can filter and score.
+// deno-lint-ignore no-explicit-any
+export function optionCandidatesFromChain(chain: any): OptionCandidate[] {
+  const out: OptionCandidate[] = [];
+  const ticker = chain?.symbol ?? "";
+  const underlyingPrice = number(chain?.underlyingPrice ?? chain?.underlying?.mark ?? 0);
+  const maps: [OptionCandidate["putCall"], any][] = [
+    ["PUT", chain?.putExpDateMap],
+    ["CALL", chain?.callExpDateMap],
+  ];
+  for (const [putCall, map] of maps) {
+    if (!map || typeof map !== "object") continue;
+    for (const [expKey, strikes] of Object.entries(map)) {
+      const expiration = String(expKey).split(":")[0];
+      for (const contracts of Object.values(strikes as Record<string, any[]>)) {
+        for (const c of contracts as any[]) {
+          if (!c?.symbol) continue;
+          out.push({
+            symbol: c.symbol,
+            ticker,
+            putCall,
+            strike: number(c.strikePrice),
+            expiration,
+            dte: number(c.daysToExpiration),
+            delta: number(c.delta),
+            bid: number(c.bid),
+            ask: number(c.ask),
+            mark: number(c.mark) || (number(c.bid) + number(c.ask)) / 2,
+            iv: number(c.volatility),
+            openInterest: number(c.openInterest),
+            underlyingPrice,
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 // The symbols we need quotes for: option contracts (for greeks/delta) and the
 // underlying + equity tickers (for prices).
 // deno-lint-ignore no-explicit-any
