@@ -36,7 +36,7 @@ export async function getBotState(): Promise<BotState> {
     supabase
       .from("bot_proposals")
       .select(
-        "id, ticker, strategy, strike, expiration, contracts, option_symbol, limit_price, est_premium, capital_required, score, rationale, status, created_at, decided_at, details"
+        "id, ticker, strategy, strike, expiration, contracts, option_symbol, limit_price, est_premium, capital_required, score, tier, rationale, status, created_at, decided_at, details"
       )
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
@@ -100,6 +100,8 @@ function normalizeProposal(row: Record<string, unknown>): BotProposal {
     score: num(row.score),
     rationale: row.rationale ? String(row.rationale) : null,
     status: row.status as BotProposal["status"],
+    tier: row.tier === "near_miss" ? "near_miss" : "qualified",
+    miss_reason: (row.details as ProposalDetails | null)?.missReason ?? null,
     created_at: String(row.created_at),
     decided_at: row.decided_at ? String(row.decided_at) : null,
     details: (row.details as ProposalDetails) ?? null,
@@ -127,31 +129,37 @@ function demoBotState(): BotState {
 
   const exp = expDate(30);
   const proposals: BotProposal[] = [
-    mkProposal("d1", "PG", 158, exp, 1.9, 156.1, 87, "proposed",
+    // Qualified — met every rule (score ≥ 80).
+    mkProposal("d1", "PG", 158, exp, 1.9, 156.1, 87, "proposed", "qualified", null,
       { quality: 24, technical: 21, option: 14.5, liquidity: 13, downside: 8.5, eventPortfolio: 4 },
       { simpleAnnualized: 22.1, breakevenCushion: 6.7, delta: -0.22, openInterest: 8200, spreadPct: 2.1, dte: 30, principalRisk: "General market drawdown risk before expiration." }, iso(0)),
-    mkProposal("d2", "JNJ", 150, exp, 1.75, 148.25, 85, "proposed",
+    mkProposal("d2", "JNJ", 150, exp, 1.75, 148.25, 85, "proposed", "qualified", null,
       { quality: 24, technical: 20, option: 14, liquidity: 12.5, downside: 8, eventPortfolio: 4 },
       { simpleAnnualized: 21.5, breakevenCushion: 7.4, delta: -0.21, openInterest: 5100, spreadPct: 2.8, dte: 30, principalRisk: "General market drawdown risk before expiration." }, iso(0)),
-    mkProposal("d3", "KO", 60, exp, 0.72, 59.28, 82, "proposed",
+    mkProposal("d3", "KO", 60, exp, 0.72, 59.28, 82, "proposed", "qualified", null,
       { quality: 23, technical: 19, option: 13.5, liquidity: 12, downside: 8, eventPortfolio: 4 },
       { simpleAnnualized: 20.6, breakevenCushion: 6.1, delta: -0.23, openInterest: 6400, spreadPct: 3.4, dte: 30, principalRisk: "Thin downside cushion — watch technical support." }, iso(0)),
-    mkProposal("d4", "PEP", 168, exp, 2.1, 165.9, 84, "approved",
+    // Near-misses — passed the hard filters but under the 80 bar; fill to 5.
+    mkProposal("d4", "MDLZ", 62, exp, 0.7, 61.3, 79, "proposed", "near_miss", "Scored 79 — just under the 80 bar (weakest on technical).",
+      { quality: 22, technical: 17, option: 14, liquidity: 12, downside: 7.5, eventPortfolio: 3.5 },
+      { simpleAnnualized: 20.2, breakevenCushion: 5.4, delta: -0.24, openInterest: 4200, spreadPct: 3.8, dte: 30, principalRisk: "Thin cushion; technical trend only fair." }, iso(0)),
+    mkProposal("d5", "CL", 88, exp, 1.0, 87.0, 78, "proposed", "near_miss", "Scored 78 — just under the 80 bar (weakest on downside protection).",
+      { quality: 23, technical: 18, option: 13, liquidity: 11, downside: 6.5, eventPortfolio: 3.5 },
+      { simpleAnnualized: 20.8, breakevenCushion: 4.8, delta: -0.25, openInterest: 2600, spreadPct: 4.6, dte: 30, principalRisk: "Below-average liquidity and thin cushion." }, iso(0)),
+    // History.
+    mkProposal("d6", "PEP", 168, exp, 2.1, 165.9, 84, "approved", "qualified", null,
       { quality: 24, technical: 20, option: 14, liquidity: 12, downside: 8, eventPortfolio: 4 },
       { simpleAnnualized: 21.3, breakevenCushion: 6.9, delta: -0.22, openInterest: 3900, spreadPct: 3.0, dte: 30, principalRisk: "General market drawdown risk before expiration." }, iso(-1)),
   ];
 
   const runs: BotRun[] = [
-    { id: "r1", trigger: "cron", status: "ok", candidates_evaluated: 1180, proposals_created: 3, message: null, ran_at: iso(0) },
+    { id: "r1", trigger: "cron", status: "ok", candidates_evaluated: 1180, proposals_created: 5, message: null, ran_at: iso(0) },
     { id: "r2", trigger: "cron", status: "partial", candidates_evaluated: 540, proposals_created: 0, message: "scanned 120/236", ran_at: iso(0) },
   ];
 
   const report: BotReportView = {
     counts: { universe: 236, scanned: 236, rejectedBeforeOptions: 141, contractsEvaluated: 1180, passedHardFilters: 22, scored80Plus: 3 },
-    watchlist: [
-      { ticker: "MDLZ", score: 79, strike: 62, expiration: exp, simpleAnnualized: 20.2 },
-      { ticker: "CL", score: 78, strike: 88, expiration: exp, simpleAnnualized: 20.8 },
-    ],
+    watchlist: [],
     highYieldRejections: [
       { ticker: "CVNA", reason: "Overextended: RSI 74 > 68", simpleAnnualized: 61.4 },
       { ticker: "PLTR", reason: "Earnings before expiration", simpleAnnualized: 44.9 },
@@ -186,6 +194,8 @@ function mkProposal(
   breakeven: number,
   score: number,
   status: BotProposal["status"],
+  tier: BotProposal["tier"],
+  missReason: string | null,
   components: NonNullable<ProposalDetails["components"]>,
   extra: Partial<ProposalDetails>,
   created: string
@@ -204,12 +214,14 @@ function mkProposal(
     est_premium: Math.round(limit * 100 * contracts),
     capital_required: capital,
     score,
+    tier,
+    miss_reason: missReason,
     rationale:
       `${ticker}: sell ${contracts} ${strike}P exp ${expiration} (Δ ${(extra.delta ?? -0.22).toFixed(2)}) at ~$${Math.round(limit * 100 * contracts)} ` +
       `credit — ${extra.simpleAnnualized}% simple annualized on $${capital.toLocaleString()} secured. Breakeven $${breakeven} (${extra.breakevenCushion}% cushion).`,
     status,
     created_at: created,
     decided_at: status === "proposed" ? null : created,
-    details: { components, breakeven, currentPrice: Math.round(breakeven * 1.07 * 100) / 100, ...extra },
+    details: { components, breakeven, currentPrice: Math.round(breakeven * 1.07 * 100) / 100, missReason: missReason ?? undefined, ...extra },
   };
 }
