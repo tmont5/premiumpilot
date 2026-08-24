@@ -159,6 +159,11 @@ export interface ScoredTrade {
   principalRisk: string;
   doNotEnterBelow: number;
   aiRiskFlags: string[];
+  // "qualified" = met every rule and scored ≥ publish threshold. "near_miss" =
+  // passed the hard filters but scored below the bar; surfaced only to fill the
+  // day's list to maxTradesPerDay so there are always trades to consider.
+  tier: "qualified" | "near_miss";
+  missReason?: string; // why a near_miss fell short (for the UI)
 }
 
 export interface RejectedTrade {
@@ -204,48 +209,67 @@ export interface ScanCounts {
   passedHardFilters: number;
 }
 
-// Evaluate ONE ticker: stock hard filters, then the best-scoring eligible
-// contract. Deterministic and side-effect-free.
+// Evaluate ONE ticker. Deterministic. Returns the ticker's single best candidate
+// — a STRICT one (meets every rule) if available, otherwise the best SOFT
+// near-miss (safe and tradeable, but missed a preference rule like the ≥20%
+// return, delta band, DTE window, OI, or spread — tagged with `missReason`).
+// Safety failures (earnings before expiry, unaffordable, un-tradeable quote,
+// overextended/low-quality underlying) are never returned as candidates.
 export function evaluateTicker(t: TickerInput, config: BotConfig, market: MarketContext, now: Date): TickerEval {
   const stockReject = stockHardFilterReason(t, config, now);
   if (stockReject) {
     return { ticker: t.ticker, best: null, rejection: { ticker: t.ticker, reason: stockReject, simpleAnnualized: null }, contractsEvaluated: 0, passedHardFilters: 0, rejectedBeforeOptions: true };
   }
 
-  let best: ScoredTrade | null = null;
+  let bestStrict: ScoredTrade | null = null;
+  let bestRelaxed: ScoredTrade | null = null;
   let contractsEvaluated = 0;
   let passedHardFilters = 0;
-  let notable: RejectedTrade | null = null; // highest-return rejection
+  let notable: RejectedTrade | null = null;
 
   for (const opt of t.options) {
     if (opt.putCall !== "PUT") continue;
-    if (opt.dte < config.minDte || opt.dte > config.maxDte) continue; // silent DTE pre-skip
-    const absDelta = Math.abs(opt.delta);
-    if (absDelta < config.minDelta || absDelta > config.maxDelta) continue; // silent delta pre-skip
-    contractsEvaluated += 1;
-    const reason = contractHardFilterReason(opt, t, config, now);
-    if (reason) {
+    const ad = Math.abs(opt.delta);
+    // Neighborhood: only score contracts reasonably near our params.
+    if (opt.dte < 12 || opt.dte > 45) continue;
+    if (ad < 0.1 || ad > 0.4) continue;
+
+    const safety = contractSafetyReject(opt, t, config);
+    if (safety) {
       const sa = simpleAnnualizedOf(opt, config.contractsPerTrade);
-      if (!notable || sa > (notable.simpleAnnualized ?? -1)) notable = { ticker: t.ticker, reason, simpleAnnualized: sa };
+      if (!notable || sa > (notable.simpleAnnualized ?? -1)) notable = { ticker: t.ticker, reason: safety, simpleAnnualized: sa };
       continue;
     }
-    passedHardFilters += 1;
+
+    contractsEvaluated += 1;
+    const miss = strictContractMiss(opt, t, config);
     const scored = scoreTrade(opt, t, config, market);
-    if (!best || scored.score > best.score) best = scored;
+    if (!miss) {
+      passedHardFilters += 1;
+      if (!bestStrict || scored.score > bestStrict.score) bestStrict = scored;
+    } else {
+      scored.missReason = miss;
+      if (!bestRelaxed || scored.score > bestRelaxed.score) bestRelaxed = scored;
+    }
   }
 
+  const best = bestStrict ?? bestRelaxed;
   return {
     ticker: t.ticker,
     best,
-    rejection: best ? null : notable ?? { ticker: t.ticker, reason: "No qualifying contract", simpleAnnualized: null },
+    rejection: best ? null : notable ?? { ticker: t.ticker, reason: "No tradeable contract in range", simpleAnnualized: null },
     contractsEvaluated,
     passedHardFilters,
     rejectedBeforeOptions: false,
   };
 }
 
-// Rank a set of per-ticker best contracts into the published report (≤ per-sector
-// cap, ≤ daily max, score threshold), plus watchlist and high-yield rejections.
+// Rank a set of per-ticker best contracts. Always returns up to
+// maxTradesPerDay proposals: the QUALIFIED ones (≥ publish threshold, sector-
+// capped) first, then the highest-scoring NEAR-MISSES (passed every hard filter
+// but fell short of the 80 bar) to fill the list, so there are always trades to
+// consider. Hard-filter failures are never surfaced as proposals — only the
+// score bar is relaxed for the fill.
 export function rankAndReport(
   bests: ScoredTrade[],
   rejections: RejectedTrade[],
@@ -256,23 +280,54 @@ export function rankAndReport(
   const warnings = new Set(dataWarnings);
   const sorted = [...bests].sort((a, b) => b.score - a.score || tiebreak(b) - tiebreak(a));
 
-  const published: ScoredTrade[] = [];
+  // Tier 1 — qualified: met every rule (no missReason), ≥ threshold, sector-
+  // capped, ≤ daily max.
+  const qualified: ScoredTrade[] = [];
+  const chosen = new Set<ScoredTrade>();
   const sectorCount = new Map<string, number>();
   for (const trade of sorted) {
+    if (trade.missReason) continue; // soft near-miss — can only fill, never qualify
     if (trade.score < config.publishThreshold) continue;
-    if (published.length >= config.maxTradesPerDay) break;
+    if (qualified.length >= config.maxTradesPerDay) break;
     const sector = trade.sector ?? "Unknown";
     if ((sectorCount.get(sector) ?? 0) >= config.maxPerSector) {
-      trade.aiRiskFlags.push(`Skipped — already ${config.maxPerSector} ${sector} picks (sector cap).`);
+      trade.aiRiskFlags.push(`Sector cap: already ${config.maxPerSector} ${sector} picks.`);
       continue;
     }
-    published.push(trade);
+    trade.tier = "qualified";
+    qualified.push(trade);
+    chosen.add(trade);
     sectorCount.set(sector, (sectorCount.get(sector) ?? 0) + 1);
     if (trade.iv <= 0) warnings.add("IV percentile unavailable — implied-volatility sub-score is neutral.");
   }
 
+  // Tier 2 — near-miss fill to maxTradesPerDay. Prefer STRICT candidates that met
+  // every rule but scored under the bar (safest), then SOFT candidates that
+  // missed a preference rule (return/delta/DTE/OI/spread), each by score. Safety
+  // failures are already excluded (never in `bests`). Sector cap relaxed here.
+  const nearMisses: ScoredTrade[] = [];
+  const remaining = sorted.filter((t) => !chosen.has(t));
+  const strictFirst = [...remaining.filter((t) => !t.missReason), ...remaining.filter((t) => t.missReason)];
+  for (const trade of strictFirst) {
+    if (qualified.length + nearMisses.length >= config.maxTradesPerDay) break;
+    trade.tier = "near_miss";
+    // Strict-but-under-bar candidates have no rule miss yet; label by score.
+    if (!trade.missReason) {
+      trade.missReason =
+        trade.score < config.publishThreshold
+          ? `Scored ${trade.score} — under the ${config.publishThreshold} bar (${weakestArea(trade)}).`
+          : `Bumped by the ${config.maxPerSector}-per-sector cap.`;
+    } else {
+      trade.missReason = `Missed a rule: ${trade.missReason}.`;
+    }
+    nearMisses.push(trade);
+    chosen.add(trade);
+  }
+
+  const proposals = [...qualified, ...nearMisses];
+
   const watchlist = sorted
-    .filter((t) => t.score >= config.watchlistFloor && t.score < config.publishThreshold)
+    .filter((t) => !chosen.has(t) && t.score >= config.watchlistFloor && t.score < config.publishThreshold)
     .slice(0, 5);
 
   const highYieldRejections = rejections
@@ -286,13 +341,26 @@ export function rankAndReport(
   }
 
   return {
-    published,
+    published: proposals,
     watchlist,
     highYieldRejections,
     concentrationFlags,
     dataWarnings: [...warnings],
-    counts: { ...counts, scored80Plus: sorted.filter((t) => t.score >= config.publishThreshold).length },
+    counts: { ...counts, scored80Plus: sorted.filter((t) => !t.missReason && t.score >= config.publishThreshold).length },
   };
+}
+
+// Human-readable weakest scoring dimension (as a % of that category's budget).
+function weakestArea(t: ScoredTrade): string {
+  const pct: [string, number][] = [
+    ["quality", t.components.quality / 25],
+    ["technical", t.components.technical / 25],
+    ["option value", t.components.option / 20],
+    ["liquidity", t.components.liquidity / 15],
+    ["downside protection", t.components.downside / 10],
+  ];
+  pct.sort((a, b) => a[1] - b[1]);
+  return `weakest on ${pct[0][0]}`;
 }
 
 // Convenience: evaluate a full set in-memory (used in tests and small scans).
@@ -341,29 +409,32 @@ function stockHardFilterReason(t: TickerInput, config: BotConfig, now: Date): st
   return null;
 }
 
-function contractHardFilterReason(opt: OptionCandidate, t: TickerInput, config: BotConfig, now: Date): string | null {
-  if (opt.dte < config.minDte || opt.dte > config.maxDte) return null; // silently out of DTE window (not reported)
+// SAFETY gates — a contract failing any of these is never shown, not even as a
+// near-miss (can't be traded, unaffordable, or carries event risk).
+function contractSafetyReject(opt: OptionCandidate, t: TickerInput, config: BotConfig): string | null {
   if (opt.strike >= t.currentPrice) return "Put not out of the money";
-  const absDelta = Math.abs(opt.delta);
-  if (absDelta < config.minDelta || absDelta > config.maxDelta) return null; // outside delta band (not reported)
   if (opt.bid <= 0) return "Zero or missing bid";
   if (opt.ask < opt.bid) return "Crossed/locked quote";
-  if (opt.openInterest < config.minOpenInterest) return "Open interest below 500";
-  // Volume may be absent on the chain; only reject when present and too low.
+  if (t.earningsDate && t.earningsDate <= opt.expiration) return "Earnings before expiration";
+  if (opt.strike * 100 * config.contractsPerTrade > config.maxPositionSize) return "Position size exceeds max";
+  return null;
+}
+
+// STRICT (preference) rules. Returns null when the contract meets them all
+// (→ a qualified candidate), otherwise a short reason for the rule it just
+// missed (→ a near-miss). Ordered by importance so the label is the headline miss.
+function strictContractMiss(opt: OptionCandidate, t: TickerInput, config: BotConfig): string | null {
+  const sa = simpleAnnualizedOf(opt, config.contractsPerTrade);
+  if (sa < config.minAnnualizedReturn) {
+    return `${(sa * 100).toFixed(1)}% annualized (< ${Math.round(config.minAnnualizedReturn * 100)}%)`;
+  }
+  const ad = Math.abs(opt.delta);
+  if (ad < config.minDelta || ad > config.maxDelta) return `Δ ${ad.toFixed(2)} (outside ${config.minDelta}–${config.maxDelta})`;
+  if (opt.dte < config.minDte || opt.dte > config.maxDte) return `${opt.dte} DTE (outside ${config.minDte}–${config.maxDte})`;
+  if (opt.openInterest < config.minOpenInterest) return `OI ${opt.openInterest} (< ${config.minOpenInterest})`;
   const mid = (opt.bid + opt.ask) / 2;
   const spreadPct = mid > 0 ? (opt.ask - opt.bid) / mid : 1;
-  if (spreadPct > config.maxSpreadPct) return "Bid/ask spread too wide (> 8%)";
-
-  const sa = simpleAnnualizedOf(opt, config.contractsPerTrade);
-  if (sa < config.minAnnualizedReturn) return "Below 20% annualized";
-
-  // Event risk: no earnings before this contract's expiration.
-  if (t.earningsDate && t.earningsDate <= opt.expiration) return "Earnings before expiration";
-
-  // Position size.
-  const gross = opt.strike * 100 * config.contractsPerTrade;
-  if (gross > config.maxPositionSize) return "Position size exceeds max";
-
+  if (spreadPct > config.maxSpreadPct) return `spread ${(spreadPct * 100).toFixed(1)}% (> ${Math.round(config.maxSpreadPct * 100)}%)`;
   return null;
 }
 
@@ -455,6 +526,7 @@ function scoreTrade(opt: OptionCandidate, t: TickerInput, config: BotConfig, mar
     principalRisk,
     doNotEnterBelow: round2(bid),
     aiRiskFlags,
+    tier: "near_miss", // set to "qualified" in rankAndReport when it clears the bar
   };
 }
 

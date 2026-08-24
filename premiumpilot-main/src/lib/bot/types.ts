@@ -5,6 +5,7 @@
 export type BotMode = "proposal" | "paper" | "auto";
 export type ProposalStatus = "proposed" | "approved" | "rejected" | "expired" | "executed";
 export type BotStrategy = "cash_secured_put" | "covered_call";
+export type ProposalTier = "qualified" | "near_miss";
 
 export interface BotSettings {
   enabled: boolean;
@@ -48,6 +49,7 @@ export interface ProposalDetails {
   doNotEnterBelow?: number;
   stress?: { drop: number; loss: number; lossPct: number }[];
   aiRiskFlags?: string[];
+  missReason?: string;
 }
 
 export interface BotProposal {
@@ -64,6 +66,8 @@ export interface BotProposal {
   score: number | null;
   rationale: string | null;
   status: ProposalStatus;
+  tier: ProposalTier;
+  miss_reason: string | null; // why a near_miss fell short (null for qualified)
   created_at: string;
   decided_at: string | null;
   details: ProposalDetails | null;

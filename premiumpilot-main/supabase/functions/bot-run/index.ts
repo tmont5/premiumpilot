@@ -208,7 +208,8 @@ async function finalize(db: ReturnType<typeof adminClient>, s: any, config: BotC
         ticker: p.ticker, strategy: "cash_secured_put", strike: p.strike, expiration: p.expiration,
         contracts: p.contracts, option_symbol: p.optionSymbol, limit_price: p.suggestedLimit,
         est_premium: Math.round(p.bid * 100 * p.contracts), capital_required: p.netCashRequirement,
-        score: p.score, rationale: p.rationale, criteria: { components: p.components, principalRisk: p.principalRisk }, details: p,
+        score: p.score, tier: p.tier, rationale: p.rationale,
+        criteria: { components: p.components, principalRisk: p.principalRisk, missReason: p.missReason }, details: p,
       }))
     );
     if (insErr) throw insErr;

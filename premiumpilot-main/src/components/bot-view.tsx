@@ -93,6 +93,58 @@ export function BotView({ state }: { state: BotState }) {
   }
 
   const lastRun = state.runs[0];
+  const qualified = proposed.filter((p) => p.tier !== "near_miss");
+  const nearMiss = proposed.filter((p) => p.tier === "near_miss");
+
+  const proposalCard = (p: BotProposal) => (
+    <div key={p.id} className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold">{p.ticker}</span>
+          <span className="text-sm text-muted-foreground">
+            {p.strategy === "cash_secured_put" ? "Sell Put" : "Sell Call"} · {fmtCurrency0(p.strike)} · {fmtDate(p.expiration)} · {p.contracts}x
+          </span>
+          {p.score != null && <Badge variant="secondary">{p.score.toFixed(0)} score</Badge>}
+          {p.tier === "near_miss" && <Badge variant="outline">Near miss</Badge>}
+        </div>
+        <p className="mt-1 text-sm text-muted-foreground">{p.rationale}</p>
+        {p.tier === "near_miss" && p.miss_reason && (
+          <p className="mt-1 text-xs font-medium text-warning">{p.miss_reason}</p>
+        )}
+        <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+          {p.est_premium != null && <span>Credit {fmtCurrency0(p.est_premium)}</span>}
+          {p.capital_required != null && <span>Secured {fmtCurrency0(p.capital_required)}</span>}
+          {p.details?.simpleAnnualized != null && <span>{p.details.simpleAnnualized}% ann.</span>}
+          {p.details?.breakevenCushion != null && <span>{p.details.breakevenCushion}% cushion</span>}
+          {p.details?.delta != null && <span>Δ {p.details.delta.toFixed(2)}</span>}
+          {p.details?.openInterest != null && <span>OI {p.details.openInterest.toLocaleString()}</span>}
+        </div>
+        {p.details?.components && (
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+            <span>Quality {p.details.components.quality}/25</span>
+            <span>Technical {p.details.components.technical}/25</span>
+            <span>Option {p.details.components.option}/20</span>
+            <span>Liquidity {p.details.components.liquidity}/15</span>
+            <span>Downside {p.details.components.downside}/10</span>
+            <span>Event {p.details.components.eventPortfolio}/5</span>
+          </div>
+        )}
+        {p.details?.principalRisk && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            <span className="font-medium">Principal risk:</span> {p.details.principalRisk}
+          </p>
+        )}
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={pendingId === p.id} onClick={() => decide(p, "approve")}>
+          <Check className="size-4" /> Approve
+        </Button>
+        <Button size="sm" variant="outline" disabled={pendingId === p.id} onClick={() => decide(p, "reject")}>
+          <X className="size-4" /> Reject
+        </Button>
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -177,11 +229,14 @@ export function BotView({ state }: { state: BotState }) {
         </CardContent>
       </Card>
 
-      {/* Today's proposals */}
+      {/* Today's proposals — always up to 5 to consider */}
       <Card>
         <CardHeader>
           <CardTitle>Today&apos;s Proposals {proposed.length > 0 && <Badge variant="warning" className="ml-1">{proposed.length}</Badge>}</CardTitle>
-          <CardDescription>Review each suggestion. Approving records your decision; it does not place an order.</CardDescription>
+          <CardDescription>
+            Up to 5 trades to consider each run: qualified picks first, then the best near-misses to fill the slate. Approving
+            records your decision; it does not place an order.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {proposed.length === 0 ? (
@@ -189,52 +244,25 @@ export function BotView({ state }: { state: BotState }) {
               No open proposals. {enabled ? "The bot will post its next set on the daily run, or click Run now." : "Enable the bot and set a ticker universe to get started."}
             </p>
           ) : (
-            <div className="space-y-3">
-              {proposed.map((p) => (
-                <div key={p.id} className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{p.ticker}</span>
-                      <span className="text-sm text-muted-foreground">
-                        {p.strategy === "cash_secured_put" ? "Sell Put" : "Sell Call"} · {fmtCurrency0(p.strike)} · {fmtDate(p.expiration)} · {p.contracts}x
-                      </span>
-                      {p.score != null && <Badge variant="secondary">{p.score.toFixed(0)} score</Badge>}
-                    </div>
-                    <p className="mt-1 text-sm text-muted-foreground">{p.rationale}</p>
-                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-                      {p.est_premium != null && <span>Credit {fmtCurrency0(p.est_premium)}</span>}
-                      {p.capital_required != null && <span>Secured {fmtCurrency0(p.capital_required)}</span>}
-                      {p.details?.simpleAnnualized != null && <span>{p.details.simpleAnnualized}% ann.</span>}
-                      {p.details?.breakevenCushion != null && <span>{p.details.breakevenCushion}% cushion</span>}
-                      {p.details?.delta != null && <span>Δ {p.details.delta.toFixed(2)}</span>}
-                      {p.details?.openInterest != null && <span>OI {p.details.openInterest.toLocaleString()}</span>}
-                    </div>
-                    {p.details?.components && (
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-                        <span>Quality {p.details.components.quality}/25</span>
-                        <span>Technical {p.details.components.technical}/25</span>
-                        <span>Option {p.details.components.option}/20</span>
-                        <span>Liquidity {p.details.components.liquidity}/15</span>
-                        <span>Downside {p.details.components.downside}/10</span>
-                        <span>Event {p.details.components.eventPortfolio}/5</span>
-                      </div>
-                    )}
-                    {p.details?.principalRisk && (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        <span className="font-medium">Principal risk:</span> {p.details.principalRisk}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button size="sm" disabled={pendingId === p.id} onClick={() => decide(p, "approve")}>
-                      <Check className="size-4" /> Approve
-                    </Button>
-                    <Button size="sm" variant="outline" disabled={pendingId === p.id} onClick={() => decide(p, "reject")}>
-                      <X className="size-4" /> Reject
-                    </Button>
-                  </div>
+            <div className="space-y-5">
+              <div className="space-y-3">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Qualified — met every rule ({qualified.length})
+                </p>
+                {qualified.length ? (
+                  qualified.map(proposalCard)
+                ) : (
+                  <p className="text-sm text-muted-foreground">None cleared the 80 bar this run.</p>
+                )}
+              </div>
+              {nearMiss.length > 0 && (
+                <div className="space-y-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Near misses — filling the slate to 5 ({nearMiss.length})
+                  </p>
+                  {nearMiss.map(proposalCard)}
                 </div>
-              ))}
+              )}
             </div>
           )}
         </CardContent>
