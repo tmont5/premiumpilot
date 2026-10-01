@@ -8,7 +8,7 @@ export default async function HeatmapPage() {
   const pf = await getPortfolio();
   return (
     <>
-      <PageHeader title="Portfolio Heat Map" description="DTE vs. profit capture, sized by capital at risk.">
+      <PageHeader title="Portfolio Heat Map" description="DTE vs. % from strike, sized by capital at risk.">
         <div className="flex items-center gap-2">
           <Badge variant="success">Close Candidate</Badge>
           <Badge variant="warning">Monitor</Badge>
