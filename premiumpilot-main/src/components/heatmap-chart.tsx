@@ -41,7 +41,7 @@ export function HeatmapChart({ positions }: { positions: EnrichedPosition[] }) {
 
   const data: Point[] = positions.map((p) => ({
     x: p.metrics.dte,
-    y: Math.round(p.metrics.profitCapturePct),
+    y: Math.round(p.metrics.distanceFromStrikePct * 100),
     z: p.capital_requirement,
     ticker: p.ticker,
     status: p.metrics.status,
@@ -62,10 +62,10 @@ export function HeatmapChart({ positions }: { positions: EnrichedPosition[] }) {
         <YAxis
           type="number"
           dataKey="y"
-          name="Profit Capture"
+          name="Distance From Strike"
           unit="%"
           tick={{ fontSize: 12 }}
-          label={{ value: "Profit Capture %", angle: -90, position: "insideLeft", fontSize: 12 }}
+          label={{ value: "% From Strike", angle: -90, position: "insideLeft", fontSize: 12 }}
         />
         <ZAxis type="number" dataKey="z" range={[80, 600]} name="Capital" />
         <Tooltip cursor={{ strokeOpacity: 0.2 }} content={<HeatmapTooltip />} />
@@ -86,7 +86,7 @@ function HeatmapTooltip({ active, payload }: { active?: boolean; payload?: { pay
     <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
       <p className="font-semibold">{d.ticker}</p>
       <p className="text-muted-foreground">{STATUS_LABEL[d.status]}</p>
-      <p>{d.x} DTE · {d.y}% captured</p>
+      <p>{d.x} DTE · {d.y >= 0 ? "+" : ""}{d.y}% from strike</p>
       <p>Capital at risk: {fmtCurrency0(d.z)}</p>
     </div>
   );
